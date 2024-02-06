@@ -22,6 +22,7 @@ def has_write_permission(directory_path):
 import pandas as pd
 import numpy as np
 import logging
+from tqdm import tqdm
 
 def save_preprocessed_data(gt_array, variant_info_df, output_file_prefix):
     numpy_save_file_name = f"{output_file_prefix}_matrix.npy"
@@ -97,11 +98,50 @@ class SNPDataSet:
 
             print(f"Filter variant retained {num_variant_after} / {num_variant_before}")
         else:
-            raise NotImplementedError
+            num_variant_before = self.genotype_array.shape[1]
 
+            new_snp_dataset = SNPDataSet(self.genotype_array[:, filter_array], self.variant_info_df.iloc[filter_array], self.sample_annotation_df)
+
+            num_variant_after = new_snp_dataset.genotype_array.shape[1]
+
+            print(f"Filter variant retained {num_variant_after} / {num_variant_before}")
+            return(new_snp_dataset)
 
     def save_data(self, output_file_prefix):
         save_preprocessed_data(self.genotype_array, self.variant_info_df, output_file_prefix)
+
+    def create_onehot_genotype_array(self, inplace = False, batch_initialize = False):
+        """
+        Convert the genotype array into a one-hot encoded format.
+        :input: self.genotype_array NumPy array with shape (# samples, # snps) with values 0 to 3
+        :result: saved in self.genotype_array_onehot (# samples, # snps, 2) if inplace = True, else returned.
+        """
+        # Initialize an array of zeros with the new shape
+
+        converted_array = np.empty((self.genotype_array.shape[0], self.genotype_array.shape[1], 2), dtype=np.int8)
+        converted_array.fill(0)
+
+        if batch_initialize:
+            # perform batch by batch initialize to reduce memory consumption
+            for i in tqdm(range(self.genotype_array.shape[0])):
+                converted_array[i][(self.genotype_array[i] == 0)] = np.array([0, 0], dtype=np.int8)
+                converted_array[i][(self.genotype_array[i] == 1)] = np.array([0, 1], dtype=np.int8)
+                converted_array[i][(self.genotype_array[i] == 2)] = np.array([1, 0], dtype=np.int8)
+                converted_array[i][(self.genotype_array[i] == 3)] = np.array([1, 1], dtype=np.int8)
+
+        else:
+            converted_array[np.where(self.genotype_array == 0)] = [0, 0]
+            converted_array[np.where(self.genotype_array == 1)] = [0, 1]
+            converted_array[np.where(self.genotype_array == 2)] = [1, 0]
+            converted_array[np.where(self.genotype_array == 3)] = [1, 1]
+
+        if inplace:
+            self.genotype_array_onehot = converted_array
+        else:
+            return(converted_array)
+            
+
+
 
 ### test initialization
 # a = np.array([[1,2,3,4], [5,6,7,8]])
