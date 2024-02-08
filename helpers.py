@@ -24,6 +24,15 @@ import numpy as np
 import logging
 from tqdm import tqdm
 
+
+def save_genotype_array(gt_array, output_file_prefix):
+    numpy_save_file_name = f"{output_file_prefix}_matrix.npy"
+
+    gt_array_flatten = gt_array.reshape(gt_array.shape[0], -1) #flatten last feature dims
+
+    np.save(numpy_save_file_name, gt_array_flatten)
+    print(f"numpy array of shape (#samples, #features) : {gt_array_flatten.shape} -> saved to {numpy_save_file_name}. Original shape was {gt_array.shape}")
+
 def save_preprocessed_data(gt_array, variant_info_df, output_file_prefix):
     numpy_save_file_name = f"{output_file_prefix}_matrix.npy"
     pandas_save_file_name = f"{output_file_prefix}_variant.csv"
