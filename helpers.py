@@ -68,6 +68,7 @@ class SNPDataSet:
         self.variant_info_df = variant_info_df
         self.sample_annotation_df = sample_annotation_df
 
+
     @classmethod
     def from_file(cls, target_file_prefix, sample_annotation_df):
         """
@@ -92,6 +93,8 @@ class SNPDataSet:
 
             self.genotype_array = self.genotype_array[:, filter_array]
             self.variant_info_df = self.variant_info_df.iloc[filter_array]
+            if hasattr(self, 'genotype_array_onehot') and self.genotype_array_onehot is not None:
+                self.genotype_array_onehot = self.genotype_array_onehot[:, filter_array]
 
             assert self.genotype_array.shape[1] == self.variant_info_df.shape[0] 
             num_variant_after = self.genotype_array.shape[1]
