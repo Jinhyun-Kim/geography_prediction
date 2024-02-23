@@ -19,19 +19,50 @@ def has_write_permission(directory_path):
     return os.access(directory_path, os.W_OK)
 
 
+import time
+import psutil
+from memory_profiler import memory_usage
+from functools import wraps
+
+def measure_performance(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_wall = time.time()
+        start_cpu = time.process_time()
+        peak_memory = memory_usage((func, args, kwargs), max_usage=True, retval=True)
+        end_cpu = time.process_time()
+        end_wall = time.time()
+        
+        cpu_time = end_cpu - start_cpu  # CPU time in seconds
+        wall_time = end_wall - start_wall  # Physical time in seconds
+        memory_usage_val = peak_memory[0] / 1024  # Convert MiB to GiB
+
+        print(f"Function: {func.__name__}")
+        print(f"CPU Time: {cpu_time / 60:.4f} minutes")
+        print(f"Physical Time: {wall_time / 60:.4f} minutes")
+        print(f"Memory Usage: {memory_usage_val:.4f} GiB")
+
+        return peak_memory[1]  # Return the function's original return value
+    return wrapper
+
+
 import pandas as pd
 import numpy as np
 import logging
 from tqdm import tqdm
 
 
-def save_genotype_array(gt_array, output_file_prefix):
-    numpy_save_file_name = f"{output_file_prefix}_matrix.npy"
+def export_feature_array(gt_array, output_file_prefix):
+    numpy_save_file_name = f"{output_file_prefix}_feature.npy"
 
     gt_array_flatten = gt_array.reshape(gt_array.shape[0], -1) #flatten last feature dims
 
     np.save(numpy_save_file_name, gt_array_flatten)
     print(f"numpy array of shape (#samples, #features) : {gt_array_flatten.shape} -> saved to {numpy_save_file_name}. Original shape was {gt_array.shape}")
+
+def save_numpy_array(gt_array, numpy_save_file_name):
+    np.save(numpy_save_file_name, gt_array)
+    print(f"numpy array of shape (#samples, #features) : {gt_array.shape} -> saved to {numpy_save_file_name}")
 
 def save_preprocessed_data(gt_array, variant_info_df, output_file_prefix):
     numpy_save_file_name = f"{output_file_prefix}_matrix.npy"
@@ -152,6 +183,18 @@ class SNPDataSet:
         else:
             return(converted_array)
             
+    def load_onehot_genotype_array(self, target_file_prefix):
+        mat_file_name = f"{target_file_prefix}_matrix_onehot.npy"
+        print(f"Reading one hot genotype array from file {mat_file_name}")
+
+        if not os.path.isfile(mat_file_name):
+            logging.warning(f"can not find preprocessed files starting with {target_file_prefix}")
+            return None, None;
+
+        self.genotype_array_onehot = np.load(mat_file_name)
+
+        assert self.genotype_array.shape[1] == self.genotype_array_onehot.shape[1]
+
 
 
 
