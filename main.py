@@ -155,7 +155,7 @@ class Train:
 
 def select_feature(X, y, method, n):
     if method == "rf":
-        #selcect feature by random forest method
+        #selcect feature by random forest metho
         pass
         
     else if method == "random":
