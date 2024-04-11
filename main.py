@@ -13,6 +13,9 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix #, roc_cu
 from sklearn.preprocessing import LabelEncoder
 # from sklearn.preprocessing import StandardScaler
 
+import glob
+import pickle
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
@@ -49,7 +52,7 @@ class data_loader:
         self.selection = selection
         
         
-    def load_data(self):
+    def preprocesser(self):
 
         # X
 
@@ -154,109 +157,86 @@ class Train:
 
 
 def select_feature(X, y, method, n):
+    # RandomForestClassifier
     if method == "rf":
-        #selcect feature by random forest metho
-        pass
+        #selcect feature by random forest method
+        skf = StratifiedShuffleSplit(n_splits=10, test_size=0.33, random_state=42)
+        y = self.X['country_encoded']
+
+        lst_results = []
+
+        i = 1
+        for train_idx, test_idx in skf.split(X,y):
+            self.X_train = self.X.iloc[train_idx, :-1]
+            self.X_test = self.X.iloc[test_idx, :-1]
+            y_train = y.iloc[train_idx]
+            y_test = y.iloc[test_idx]
+            
+            idx1 = list(self.X_train.index)
+            idx2 = list(self.X_test.index)
+            
+            clf = RandomForestClassifier(n_estimators=1000)
+            start_time = time.time()
+            clf.fit(self.X_train, y_train)
+            end_time = time.time()
+            training_time = end_time - start_time
+            
+            with open(f'clf_rf{i}_anal.pickle_auc', 'wb') as f:
+                pickle.dump(clf, f)
+            
+            pred = clf.predict(self.X_test)
+            pred_proba = clf.predict_proba(self.X_test)    
+            accuracy = accuracy_score(y_test, pred) 
+            lst_results.append([i, 'Random Forest', idx1, idx2, accuracy,  training_time])
+            print("Random Forest_{}".format(i))
+            df_results = pd.DataFrame(data=lst_results, columns=['iter', 'method', 
+                                                                 'train_idx', 'test_idx',
+                                                                 'accuracy', 'training_time'])
+            i+=1
+
+            for i in range(1,11):
+                with open (f'clf_rf{i}_anal.pickle_auc', 'rb') as f:
+                    globals()[f'clf_rf{i}'] = pickle.load(f)
         
+            sum = []
+            for i in range(1,11):
+                sum.append(globals()[f'clf_rf{i}'].feature_importances_)
+
+            np.array(sum).mean(axis=0)
+
+            fi_rf = pd.DataFrame(np.array(sum).mean(axis=0))
+            fi_rf.index = [f'com{i}' for i in range(5105448)]
+
+            fi_rf_rank = fi_rf.copy()
+            for col in fi_rf_rank.columns[:]:
+                fi_rf_rank[col] = fi_rf_rank[col].rank(ascending=False)
+            list(fi_rf_rank.sort_values(by=0).T)
+            sort_list = list(fi_rf_rank.sort_values(by=0).T)
+            #sort_list
+            initial_num_features = 128
+            final_num_features = 4194304  # max_num
+
+            dfs = []
+            num_features = initial_num_features
+            while num_features <= final_num_features:
+                selected_features = sort_list[:num_features]
+
+                selected_df = selected_features.copy()
+                dfs.append(selected_df)
+
+                num_features *= 2
+
+            for i, df in enumerate(dfs):
+                print(f"DataFrame {i+1}: {df}")
+
+            for i, df in enumerate(dfs):
+                file_name = f"data_{i+1}.npy"
+                np.save(file_name, df)
+
     else if method == "random":
         # select feature randomly
         pass
-
-    return(X_select)
-
-### 각 Task별 조건으로 해서 1은 ab만 2는 a만 이런식으로해서.
-### 시각화는 따로
-
-########################################################
-
-# class Feature_important:
-
-#     def __init__(self):
-#         pass
-
-#     def Feature_selection(self):
-
-#         StratifiedShuffleSplit
-#         RandomForestClassifier
-#         # list로 추출 -> 저장(파일)
-#         return sort_list
-
-#     def random_sample(self):
-
-#         # list 생성
-#         return list
-
-
-# class train(self):
-    
-#     def model(self, svm = True):
-#         # seed
-#         random_seed =42
-#         random_state = random_seed
-#         SVM_parameter = {'C':, 'gamma':, 'kernel' = }
-#         XGB_parameter = {
-#             # 'max_depth': 3,
-#             'learning_rate': 0.1,
-#             # 'n_estimators': 100,
-#             'gamma': 0, # default
-#             'subsample': 1, # default
-#             # 'random_state': random_seed
-#         }
-        
-#         #modeling
-
-#         SVM_model = SVC(SVM_parameter)
-#         SVM_model(self.X_train, self.y_train)
-
-#         XGB_Boost = XGBClassifier(**XGB_parameter)
-#         XGB_Boost.fit(self.X_train, self.y_train)
-
-#         decision_tree_model = DecisionTreeClassifier(random_state)
-#         decision_tree_model.fit(self.X_train, self.y_train)
-
-
-#         #pred
-#         list = []
-#         if self.svm == Ture:
-#             return list.append(svm_pred)
-#         else:
-#             return list.append(svm_pred, XGB_pred, DT_pred)
-        
-
-# class visualization(self):
-
-#     def result_data(self):
-
-#         acc = accuracy_score(model_pred = )
-#         f1_micro = f1_score(average = 'micro')
-#         f1_macro =f1_score(average = 'macro')
-#         f1_weighted =f1_score(average = 'weighted')
-        
-#         confusion_matrix
-#         plt.figure(figsize=(8, 6))
-
-        
-#         sns.heatmap(confusion_matrix, annot=True, fmt='d', cmap='Blues', cbar=False, )
-#                     # xticklabels=['Class 0', 'Class 1'], yticklabels=['Class 0', 'Class 1'])
-#         plt.xlabel('Predicted')
-#         plt.ylabel('Actual')
-#         plt.title('Confusion Matrix')
-#         plt.show()
-
-#     def graph(self):
-#         sns.barplot()
-#         sns.boxplot()
-        
-#     def analysys_data(self):
-
-#         pca = PCA
-#         pca_reslut = PCA.fit_transform()
-        
-#         n_sne = 10000
-        
-#         tsne = TSNE(n_components = 3 , verbose = 1,  perplsxity =10, n_iter=500)
-
-
+        # return(X_select)
 
 def main():
     X, y = data_loader("merged_support3_variance_0.1", sample_annotation_file)
