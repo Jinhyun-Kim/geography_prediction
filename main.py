@@ -1,148 +1,142 @@
+import os, time
+from tqdm import tqdm
 import pandas as pd
 import numpy as np # type: ignore
-import seaborn as sns
-import matplotlib.pyplot as plt
-import glob
 import pickle
+
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.feature_selection import SelectFromModel
 from sklearn.model_selection import StratifiedShuffleSplit
-
 from sklearn.feature_selection import SelectKBest, chi2, f_classif, f_regression, r_regression, mutual_info_classif
-
-
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix #, roc_curve, roc_auc_score, recall_score, precision_score,
 from sklearn.preprocessing import LabelEncoder
 # from sklearn.preprocessing import StandardScaler
-
-import glob
-import pickle
 from sklearn.model_selection import StratifiedShuffleSplit
-
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier #,GradientBoostingClassifier
 from xgboost import XGBClassifier
 # from sklearn.linear_model import Ridge
 
-import joblib 
-from helpers import measure_performance
-
-
-import os, logging
-from tqdm import tqdm
-import time
-from helpers import get_ip_address, has_write_permission, save_preprocessed_data, read_preprocessed_data
-
-# !pip install memory_profiler
+from helpers import get_ip_address, has_write_permission, measure_performance
 
 import warnings
-# 경고 메시지 무시
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore") # 경고 메시지 무시
 
-random_seed = 42
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+RANDOM_SEED = 42
+
 # ----------------------------------------------------------------------------------------------------------------
 
 class data_loader:
-    
     def __init__(self, X_path, sample_annotation_file):
         super().__init__()
+        
         self.target_label_name ='Population code'
+
         self.X = np.load(X_path)
+
         self.sample_annotation_df = pd.read_csv(sample_annotation_file, sep='\t')
         self.y = self.sample_annotation_df[self.target_label_name]
-        self.drop_label()
+        logging.info(f"[progress] Read data done. X.shape: {self.X.shape}, y.shape: {self.y.shape}")
 
-    def drop_label(self):
-        pass
+        self.drop_notusing_sample()
+        self.y_encoded = self.encode_y()
+        self.train_indices, self.test_indices = self.split_dataset()
 
-    def get_Xy(self):
-        return self.X, self.y
-        
-    def preprocesser(self):
-        X_df = pd.DataFrame(self.X)
+        assert self.X.shape[0] == self.y.shape[0]
+        assert self.X.shape[0] == self.y_encoded.shape[0]
 
-        new_columns = ['com' + str(i) for i in range(1, len(X_df.columns) + 1)]
-        X_df.columns = new_columns
-        R_df = X_df.copy()
-        
-        #select_X
-        
-        # Y
-        remove_row = self.sample_annotation_df[self.sample_annotation_df[self.target_label_name]=='IBS,MSL']
-        New_sample_annotation_df_ = self.sample_annotation_df.drop(remove_row.index)
-        R_df = R_df.drop(remove_row.index)
+    def drop_notusing_sample(self):
+        indices_to_drop = self.sample_annotation_df[self.sample_annotation_df[self.target_label_name] == 'IBS,MSL'].index
 
-        
-        R_df['Y'] = New_sample_annotation_df_[self.target_label_name]
+        if not indices_to_drop.empty:
+            self.sample_annotation_df = self.sample_annotation_df.drop(indices_to_drop)
+            self.y = self.y.drop(indices_to_drop)
+            self.X = np.delete(self.X, indices_to_drop, axis=0)
 
+        logging.info(f"[progress] Dropped {len(indices_to_drop)} samples from the dataset. X.shape: {self.X.shape}, y.shape: {self.y.shape}")
+
+    def encode_y(self):
         label_encoder = LabelEncoder()
-        R_df['country_encoded'] = label_encoder.fit_transform(R_df['Y'])
-        R_df = R_df.drop(['Y'], axis=1)  
+        y_encoded = label_encoder.fit_transform(self.y)
+        return(y_encoded)
 
-       
-        return R_df
+    def split_dataset(self):
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state = RANDOM_SEED)
+        train_indices, test_indices = next(sss.split(self.X, self.y))
+        return(train_indices, test_indices)
+
+
+    def get_data(self):
+        return self.X, self.y_encoded, self.train_indices, self.test_indices
+        
+    def get_combined_df(self):
+        df = pd.DataFrame(self.X)
+        new_columns = ['com' + str(i) for i in range(1, len(df.columns) + 1)]
+        df.columns = new_columns
+        df['country_encoded'] = self.y_encoded
+
+        return df
         
 @measure_performance
-class Train:
-    
-    def __init__(self, df, svm=True):
-        super().__init__()
-    
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(df.iloc[:,:-1], df['country_encoded'], test_size=0.2, random_state=42)
-        self.svm = svm
+def train_ML(X_train, y_train, X_test, method = "SVM"):
+    if method == "SVM":
+        params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
+        svm_model = SVC(**params, random_state = RANDOM_SEED)
+        svm_model.fit(X_train, y_train)    
 
-    def model(self):
-        #SVM
-        previous_best_params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
-        svm_model = SVC(**previous_best_params,random_state=42)
-        svm_model.fit(self.X_train, self.y_train)    
+        y_pred = svm_model.predict(X_test)
+        return y_pred
 
-        #XGB
-        xgboost_params = {
-            # 'max_depth': 3,
-            'learning_rate': 0.1,
-            # 'n_estimators': 100,
-            'gamma': 0, # default
-            'subsample': 1, # default
-            # 'random_state': random_seed
-        }
+        # #XGB
+        # xgboost_params = {
+        #     # 'max_depth': 3,
+        #     'learning_rate': 0.1,
+        #     # 'n_estimators': 100,
+        #     'gamma': 0, # default
+        #     'subsample': 1, # default
+        #     # 'random_state': random_seed
+        # }
         
-        xgboost_model = XGBClassifier(**xgboost_params)
-        xgboost_model.fit(self.X_train, self.y_train)
+        # xgboost_model = XGBClassifier(**xgboost_params)
+        # xgboost_model.fit(self.X_train, self.y_train)
 
-        #DT
-        decision_tree_model = DecisionTreeClassifier(random_state=42)
-        decision_tree_model.fit(self.X_train, self.y_trainn)
+        # #DT
+        # decision_tree_model = DecisionTreeClassifier(random_state=42)
+        # decision_tree_model.fit(self.X_train, self.y_trainn)
 
-        #pred
-        SVM_pred = svm_model.predict(self.X_test)
-        XGB_pred = xgboost_model.predict(self.X_test)
-        DT_pred = decision_tree_model.predict(self.X_test)
+        # #pred
+        # SVM_pred = svm_model.predict(self.X_test)
+        # XGB_pred = xgboost_model.predict(self.X_test)
+        # DT_pred = decision_tree_model.predict(self.X_test)
 
-        if self.svm == True :
-            return SVM_pred
-        else:
-            return SVM_pred, XGB_pred, DT_pred
+        # if self.svm == True :
+        #     return SVM_pred
+        # else:
+        #     return SVM_pred, XGB_pred, DT_pred
     
-    def visualization(self):
-        pass
+def evaluate_performance(y_test, y_pred):
+    accuracy = accuracy_score(y_test, y_pred)
+    f1_micro = f1_score(y_test, y_pred, average='micro')
+    f1_macro = f1_score(y_test, y_pred, average='macro')
+    f1_weighted = f1_score(y_test, y_pred, average='weighted')
 
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', cbar=False, 
+                xticklabels=['Class 0', 'Class 1'], yticklabels=['Class 0', 'Class 1'])
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.title('Confusion Matrix')
+    plt.show()
 
-        # accuracy = accuracy_score(self.y_test, y_pred)
-        # f1_micro = f1_score(self.y_test, y_pred, average='micro')
-        # f1_macro = f1_score(self.y_test, y_pred, average='macro')
-        # f1_weighted = f1_score(self.y_test, y_pred, average='weighted')
-        # confusion_matrix = confusion_matrix(self.y_test, y_pred)
-        # plt.figure(figsize=(8, 6))
-        # sns.heatmap(confusion_matrix, annot=True, fmt='d', cmap='Blues', cbar=False, 
-        #             xticklabels=['Class 0', 'Class 1'], yticklabels=['Class 0', 'Class 1'])
-        # plt.xlabel('Predicted')
-        # plt.ylabel('Actual')
-        # plt.title('Confusion Matrix')
-        # plt.show()
-        # return accuracy, f1_micro, f1_macro, f1_weighted, confusion_matrix
+    return [accuracy, f1_micro, f1_macro, f1_weighted, conf_matrix]
 
 def uni_feature_selection(X, y, score_func, n):
     print(f"input array shape : {X.shape}, {y.shape}. n = {n}")
@@ -152,8 +146,7 @@ def uni_feature_selection(X, y, score_func, n):
     return(X_selected)
 
 @measure_performance
-def select_feature(X, y, df, method, n):
-    # RandomForestClassifier
+def select_feature(X, y, method, n, df = None):
     if method == "rf":
         #select feature by random forest method
         skf = StratifiedShuffleSplit(n_splits=10, test_size=0.33, random_state=42)
@@ -276,7 +269,6 @@ def select_feature(X, y, df, method, n):
             num_snps_after = X_selected.shape[1]
 
             assert boolean_mask.sum() == num_snps_after
-            print(f"{method} feature selection will return {num_snps_after} / {num_snps_before} variants")
 
             
         elif method in ["chi2", "f_classif", "mutual_info_classif"]:
@@ -406,28 +398,39 @@ def main():
 
     assert os.path.exists(preprocess_path), f"Data path not exists: {raw_data_path} OR IP setting is incorrect: {get_ip_address()}"
     assert os.path.isfile(sample_annotation_file), f"File not exists : {sample_annotation_file}"
-    assert has_write_permission(preprocess_path), f"You do not have write permission for {preprocess_path}"
+    # assert has_write_permission(preprocess_path), f"You do not have write permission for {preprocess_path}"
 
 
     ## ----- data loader 
     target_feature = "merged_support3_variance_0.2499999"
     dataset = data_loader(os.path.join(preprocess_path, target_feature + "_matrix.npy"), 
                        sample_annotation_file)
-    X, y = dataset.get_Xy()
-    df = dataset.preprocesser()
+    X, y, train_indices, test_indices = dataset.get_data()
+    # df = dataset.get_combined_df()
 
     result_combined = []
-    for feature_select_method in ["rf"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
+    for feature_select_method in ["random"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
         for n_select in [128, 256]:
-            X_select, perf_metric_select = select_feature(X = X, y = y, df = df, method = feature_select_method, n = n_select)
-            print(X_select.shape)
-            y_pred, perf_metric_train = train(method = "SVM", X = X_train, y = y_train, X_test = X_test)
-            metrics = measure_performance(y_test, y_pred)
-            result = [] # combine perf_metric_select, perf_metric_train, results
-            result_combined.append(result)
+            X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
+            logging.info(f"[progress] '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
 
-    results_df = pd.DataFrame(result_combined)
-    results_df.to_excel("result.xlsx")
+            X_train, X_test = X_selected[train_indices], X_selected[test_indices]
+            y_train, y_test = y[train_indices], y[test_indices]
+
+            logging.info(f"[progress] Start ML training")
+            logging.info(f" - X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} ")
+
+            y_pred, perf_metric_train = train_ML(method = "SVM", X_train = X_train, y_train = y_train, X_test = X_test)
+            logging.info(f"[progress] Train done with perf_metrics_train: {perf_metric_train}")
+
+            metrics = evaluate_performance(y_test, y_pred)
+            logging.info(f"[progress] Accuracy: {metrics[0]*100:.4f}")
+
+    #         result = [] # combine perf_metric_select, perf_metric_train, results
+    #         result_combined.append(result)
+
+    # results_df = pd.DataFrame(result_combined)
+    # results_df.to_excel("result.xlsx")
 
 
 if __name__ == "__main__":
