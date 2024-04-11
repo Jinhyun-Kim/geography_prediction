@@ -77,7 +77,7 @@ def save_preprocessed_data(gt_array, variant_info_df, output_file_prefix):
     print(f"variant info dataframe (#features, ): {variant_info_df.shape} -> saved to {pandas_save_file_name}")
 
 def read_preprocessed_data(target_file_prefix):
-    mat_file_name = f"{target_file_prefix}_matrix.npy"
+    mat_file_name = f"{target_file_prefix}"
     variant_info_file_name = f"{target_file_prefix}_variant.csv"
     print(f"Reading data from files {mat_file_name} and {variant_info_file_name}")
 

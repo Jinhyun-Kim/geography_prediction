@@ -46,57 +46,43 @@ random_seed = 42
 
 class data_loader:
     
-    def __init__(self, X_path, sample_annotation_file, data_path, selection=False):
+    def __init__(self, X_path, sample_annotation_file):
         super().__init__()
-        
-        self.X = pd.DataFrame(np.load(X_path))
-        self.sample_annotatopn_df = pd.read_csv(sample_annotation_file, sep='\t')
-        self.df = pd.DataFrame(np.load(data_path))
-        self.selection = selection
-        
+        self.target_label_name ='Population code'
+        self.X = np.load(X_path)
+        self.sample_annotation_df = pd.read_csv(sample_annotation_file, sep='\t')
+        self.y = self.sample_annotation_df[self.target_label_name]
+        self.drop_label()
+
+    def drop_label(self):
+        pass
+
+    def get_Xy(self):
+        return self.X, self.y
         
     def preprocesser(self):
+        X_df = pd.DataFrame(self.X)
 
-        # X
-
-        ## Random Sampling
-        new_columns = ['com' + str(i) for i in range(1, len(self.X.columns) + 1)]
-        self.X.columns = new_columns
-        R_df = self.X.copy()
+        new_columns = ['com' + str(i) for i in range(1, len(X_df.columns) + 1)]
+        X_df.columns = new_columns
+        R_df = X_df.copy()
         
-        ## Feature selection
-        S_df = self.df.T.copy()
-        S_df.columns = S_df.iloc[0]
-        S_df = S_df[1:]
-        
-        common_columns = set(self.X) & set(S_df)
-        select_X = self.X[list(common_columns)]
+        #select_X
         
         # Y
-
-        remove_row = self.sample_annotatopn_df[self.sample_annotatopn_df['Population code']=='IBS,MSL']
-        
-        New_sample_annotation_df_ = self.sample_annotatopn_df.drop(remove_row.index)
-        select_X = select_X.drop(remove_row.index)
+        remove_row = self.sample_annotation_df[self.sample_annotation_df[self.target_label_name]=='IBS,MSL']
+        New_sample_annotation_df_ = self.sample_annotation_df.drop(remove_row.index)
         R_df = R_df.drop(remove_row.index)
 
         
-        R_df['Y'] = New_sample_annotation_df_['Population code']
-        select_X['Y'] = New_sample_annotation_df_['Population code']
+        R_df['Y'] = New_sample_annotation_df_[self.target_label_name]
 
         label_encoder = LabelEncoder()
-        
-        # Random Sampling
         R_df['country_encoded'] = label_encoder.fit_transform(R_df['Y'])
         R_df = R_df.drop(['Y'], axis=1)  
-        # Feature selection
-        select_X['country_encoded'] = label_encoder.fit_transform(select_X['Y'])
-        select_X = select_X.drop(['Y'], axis=1)
+
        
-        if self.selection == False :
-            return R_df
-        else:
-            return select_X
+        return R_df
         
 @measure_performance
 class Train:
@@ -166,36 +152,37 @@ def uni_feature_selection(X, y, score_func, n):
     return(X_selected)
 
 @measure_performance
-def select_feature(X, y, method, n):
+def select_feature(X, y, df, method, n):
     # RandomForestClassifier
     if method == "rf":
         #select feature by random forest method
         skf = StratifiedShuffleSplit(n_splits=10, test_size=0.33, random_state=42)
-        y = self.X['country_encoded']
+        y = df['country_encoded']
+        X = df
 
         lst_results = []
 
         i = 1
         for train_idx, test_idx in skf.split(X,y):
-            self.X_train = self.X.iloc[train_idx, :-1]
-            self.X_test = self.X.iloc[test_idx, :-1]
+            X_train = X.iloc[train_idx, :-1]
+            X_test = X.iloc[test_idx, :-1]
             y_train = y.iloc[train_idx]
             y_test = y.iloc[test_idx]
             
-            idx1 = list(self.X_train.index)
-            idx2 = list(self.X_test.index)
+            idx1 = list(X_train.index)
+            idx2 = list(X_test.index)
             
             clf = RandomForestClassifier(n_estimators=1000)
             start_time = time.time()
-            clf.fit(self.X_train, y_train)
+            clf.fit(X_train, y_train)
             end_time = time.time()
             training_time = end_time - start_time
             
             with open(f'clf_rf{i}_anal.pickle_auc', 'wb') as f:
                 pickle.dump(clf, f)
             
-            pred = clf.predict(self.X_test)
-            pred_proba = clf.predict_proba(self.X_test)    
+            pred = clf.predict(X_test)
+            pred_proba = clf.predict_proba(X_test)    
             accuracy = accuracy_score(y_test, pred) 
             lst_results.append([i, 'Random Forest', idx1, idx2, accuracy,  training_time])
             print("Random Forest_{}".format(i))
@@ -404,13 +391,36 @@ def draw_tSNE(X, y):
 
 
 def main():
-    X, y = data_loader("merged_support3_variance_0.1", sample_annotation_file)
+    ## ----- setup environment
+    data_locations = {
+        '223.195.111.48': '/project/datacamp/team11/data',
+        '147.47.44.229': '/home/jinhyun/data/1kGP',
+    }
+
+    chr_list = [str(x) for x in range(1,23)]
+    gt_dict = {"0|0" :0, "0|1" : 1, "1|0" : 2, "1|1" : 3 } # genotype dict for converting string-> inteter 
+
+    raw_data_path = data_locations.get(get_ip_address(), '/not_found')
+    sample_annotation_file = os.path.join(raw_data_path, "igsr-1000 genomes 30x on grch38.tsv")
+    preprocess_path = os.path.join(raw_data_path, "preprocessed")
+
+    assert os.path.exists(preprocess_path), f"Data path not exists: {raw_data_path} OR IP setting is incorrect: {get_ip_address()}"
+    assert os.path.isfile(sample_annotation_file), f"File not exists : {sample_annotation_file}"
+    assert has_write_permission(preprocess_path), f"You do not have write permission for {preprocess_path}"
+
+
+    ## ----- data loader 
+    target_feature = "merged_support3_variance_0.2499999"
+    dataset = data_loader(os.path.join(preprocess_path, target_feature + "_matrix.npy"), 
+                       sample_annotation_file)
+    X, y = dataset.get_Xy()
+    df = dataset.preprocesser()
 
     result_combined = []
-    for feature_select_method in ["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
+    for feature_select_method in ["rf"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
         for n_select in [128, 256]:
-            X_select, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
-            X_train, X_test, y_train, y_test = split_dataset(X_select, y, seed = random_seed)
+            X_select, perf_metric_select = select_feature(X = X, y = y, df = df, method = feature_select_method, n = n_select)
+            print(X_select.shape)
             y_pred, perf_metric_train = train(method = "SVM", X = X_train, y = y_train, X_test = X_test)
             metrics = measure_performance(y_test, y_pred)
             result = [] # combine perf_metric_select, perf_metric_train, results
