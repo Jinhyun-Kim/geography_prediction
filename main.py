@@ -9,6 +9,9 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.feature_selection import SelectFromModel
 from sklearn.model_selection import StratifiedShuffleSplit
 
+from sklearn.feature_selection import SelectKBest, chi2, f_classif, f_regression, r_regression, mutual_info_classif
+
+
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix #, roc_curve, roc_auc_score, recall_score, precision_score,
 from sklearn.preprocessing import LabelEncoder
 # from sklearn.preprocessing import StandardScaler
@@ -152,17 +155,94 @@ class Train:
         # plt.show()
         # return accuracy, f1_micro, f1_macro, f1_weighted, confusion_matrix
 
+def uni_feature_selection(X, y, score_func, n):
+    print(f"input array shape : {X.shape}, {y.shape}. n = {n}")
+    X_selected = SelectKBest(score_func, k = n).fit_transform(X, y)
+    print(f"output array shape : {X_selected.shape}")
 
+    return(X_selected)
+
+@measure_performance
 def select_feature(X, y, method, n):
     if method == "rf":
         #selcect feature by random forest metho
         pass
         
-    else if method == "random":
-        # select feature randomly
-        pass
+    else:
+        np.random.seed(1004)
+        num_snps_before = X.shape[1]
 
-    return(X_select)
+        if method in ["random", "variance"]:
+            if method == "random":
+                boolean_mask = np.zeros(num_snps_before, dtype=bool)
+                selected_indices = np.random.choice(num_snps_before, n, replace=False)
+                boolean_mask[selected_indices] = True
+
+            elif method == "variance":
+                threshold = 0.1
+                batch_process = False
+                # from sklearn.feature_selection import VarianceThreshold
+                # selector = VarianceThreshold(threshold = threshold)
+                # genotype_array_filtered = selector.fit_transform(genotype_array)
+                # boolean_mask = selector.get_support()
+                # print(f"This filter will return {genotype_array_filtered.shape} /", genotype_array.shape[1], f"variants (")
+                # print(f"This filter will retain {boolean_mask.sum()} /", genotype_array.shape[1], f"variants (", boolean_mask.sum()/genotype_array.shape[1] * 100,"%)")
+
+                if batch_process:
+                    batch_size=100000
+                    n_samples, n_snps = X.shape
+                    variances = np.zeros((n_snps, feature_dim))
+                
+                    for start in tqdm(range(0, n_snps, batch_size)):
+                        end = min(start + batch_size, n_snps)
+                        batch_var = np.var(genotype_array_onehot[:, start:end, :], axis=0)
+                        variances[start:end, :] = batch_var
+                else:
+                    variances = np.var(genotype_array_onehot, axis=0)
+                
+                boolean_mask = (variances > threshold).any(axis=1)
+                print(f"Variance filter (threshold = {threshold}) will retain {boolean_mask.sum()} /", genotype_array_onehot.shape[1], f"variants (", boolean_mask.sum()/genotype_array_onehot.shape[1] * 100,"%)")
+
+                # sns.histplot(variances.reshape(-1), bins=100, kde=True)  # 'bins' controls the number of bins, 'kde' adds a Kernel Density Estimate plot
+                # plt.title('Histogram of Data')
+                # plt.xlabel('Variances')
+                # plt.ylabel('Frequency')
+                # plt.show()
+                raise(NotImplemented)
+
+            X_selected = X[:, boolean_mask]
+            num_snps_after = X_selected.shape[1]
+
+            assert boolean_mask.sum() == num_snps_after
+            print(f"{method} feature selection will return {num_snps_after} / {num_snps_before} variants")
+
+            
+        elif method in ["chi2", "f_classif", "mutual_info_classif"]:
+            if method == "chi2":
+                score_fun = chi2
+            elif method == "f_classif":
+                score_fun = f_classif
+            elif method == "mutual_info_classif":
+                score_fun = mutual_info_classif
+            else:
+                raise
+
+            X_selected = uni_feature_selection(X = snp_dataset.genotype_array, 
+                                               y = sample_annotation_df["Population code"],
+                                               score_func = score_fun,
+                                               n = n)
+
+        elif method == "recursive_feature_selection":
+            print(f"input array shape : {X.shape}, {y.shape}. n = {n}")
+            knn = KNeighborsClassifier(n_neighbors = n)
+            sfs = SequentialFeatureSelector(knn, n_features_to_select = n)
+            sfs.fit(X, y)
+
+            #sfs.get_support()
+            X_selected = sfs.transform(X)
+            print(f"output array shape : {X_selected.shape}")
+
+    return(X_selected)
 
 ### 각 Task별 조건으로 해서 1은 ab만 2는 a만 이런식으로해서.
 ### 시각화는 따로
@@ -256,6 +336,50 @@ def select_feature(X, y, method, n):
         
 #         tsne = TSNE(n_components = 3 , verbose = 1,  perplsxity =10, n_iter=500)
 
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+def draw_PCA(X, y):
+    pca = PCA(n_components=2)
+    pca_result = pca.fit_transform(X)
+
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 1)
+    for label in np.unique(y):
+        indices = np.where(y == label)
+        plt.scatter(pca_result[indices, 0], pca_result[indices, 1], label=label, alpha=0.5)
+    plt.title(f'PCA of {snp_dataset.genotype_array.shape[1]} SNPs')
+    plt.xlabel('PC1')
+    plt.ylabel('PC2')
+    plt.legend(loc=1, prop={'size': 5})
+
+    plt.show()
+
+def draw_tSNE(X, y):
+    tsne = TSNE(n_components=2, verbose=1)
+    tsne_result = tsne.fit_transform(X)
+
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 2)
+    labels_unique = np.unique(y)
+    colors = cm.viridis(np.linspace(0, 1, len(labels_unique)))  # Using viridis colormap
+
+    for label, color in zip(labels_unique, colors):
+        indices = np.where(y == label)
+        plt.scatter(tsne_result[indices, 0], tsne_result[indices, 1], label=label, alpha=0.3,
+                    #color=color,
+                    ) 
+
+    plt.title(f't-SNE of {snp_dataset.genotype_array.shape[1]} SNPs')
+    plt.xlabel('t-SNE 1')
+    plt.ylabel('t-SNE 2')
+    plt.legend(loc=1, prop={'size': 5})
+
+    plt.show()
 
 
 def main():
