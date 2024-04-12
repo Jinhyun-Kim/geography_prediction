@@ -149,80 +149,101 @@ def uni_feature_selection(X, y, score_func, n):
 def select_feature(X, y, method, n, df = None):
     if method == "rf":
         #select feature by random forest method
-        skf = StratifiedShuffleSplit(n_splits=10, test_size=0.33, random_state=42)
-        y = df['country_encoded']
-        X = df
+        if rf_selection == True:
+            skf = StratifiedShuffleSplit(n_splits=10, test_size=0.33, random_state = RANDOM_SEED)
+            lst_results = []
+            i = 1
+            for train_idx, test_idx in skf.split(X,y):
+                X_train = X[train_idx, :-1]
+                X_test = X[test_idx, :-1]
+                y_train = y[train_idx]
+                y_test = y[test_idx]
 
-        lst_results = []
+                idx1 = list(X_train)
+                idx2 = list(X_test)
+                
+                clf = RandomForestClassifier(n_estimators=1000)
+                start_time = time.time()
+                clf.fit(X_train, y_train)
+                end_time = time.time()
+                training_time = end_time - start_time
+                
+                with open(f'clf_rf{i}_anal.pickle_auc', 'wb') as f:
+                    pickle.dump(clf, f)
 
-        i = 1
-        for train_idx, test_idx in skf.split(X,y):
-            X_train = X.iloc[train_idx, :-1]
-            X_test = X.iloc[test_idx, :-1]
-            y_train = y.iloc[train_idx]
-            y_test = y.iloc[test_idx]
-            
-            idx1 = list(X_train.index)
-            idx2 = list(X_test.index)
-            
-            clf = RandomForestClassifier(n_estimators=1000)
-            start_time = time.time()
-            clf.fit(X_train, y_train)
-            end_time = time.time()
-            training_time = end_time - start_time
-            
-            with open(f'clf_rf{i}_anal.pickle_auc', 'wb') as f:
-                pickle.dump(clf, f)
-            
-            pred = clf.predict(X_test)
-            pred_proba = clf.predict_proba(X_test)    
-            accuracy = accuracy_score(y_test, pred) 
-            lst_results.append([i, 'Random Forest', idx1, idx2, accuracy,  training_time])
-            print("Random Forest_{}".format(i))
-            df_results = pd.DataFrame(data=lst_results, columns=['iter', 'method', 
-                                                                 'train_idx', 'test_idx',
-                                                                 'accuracy', 'training_time'])
-            i+=1
+                pred = clf.predict(X_test)
+                pred_proba = clf.predict_proba(X_test)    
+                accuracy = accuracy_score(y_test, pred) 
 
-            for i in range(1,11):
-                with open (f'clf_rf{i}_anal.pickle_auc', 'rb') as f:
-                    globals()[f'clf_rf{i}'] = pickle.load(f)
+                lst_results.append([i, 'Random Forest', idx1, idx2, accuracy,  training_time])
+                print("Random Forest_{}".format(i))
+                i += 1 
+                # loop
+
+                # df_results : Check AUC
+                df_results = pd.DataFrame(data=lst_results, columns=['iter', 'method', 
+                                                                    'train_idx', 'test_idx',
+                                                                    'accuracy', 'training_time'])
+            else:
+                pass
+            # ended loop and reload
+        for i in range(1,11):
+            with open (f'clf_rf{i}_anal.pickle_auc', 'rb') as f:
+                globals()[f'clf_rf{i}'] = pickle.load(f)
         
-            sum = []
-            for i in range(1,11):
-                sum.append(globals()[f'clf_rf{i}'].feature_importances_)
+        sum = []
+        for i in range(1,11):
+            sum.append(globals()[f'clf_rf{i}'].feature_importances_)
 
-            np.array(sum).mean(axis=0)
+        np.array(sum).mean(axis=0)
 
-            fi_rf = pd.DataFrame(np.array(sum).mean(axis=0))
-            fi_rf.index = [f'com{i}' for i in range(5105448)]
+        fi_rf = pd.DataFrame(np.array(sum).mean(axis=0))
+        # fi_rf.index = [f'com{i}' for i in range(5105448)]
+        fi_rf.index = [f'com{i}' for i in range(9190)]
+        fi_rf_rank = fi_rf.copy()
 
-            fi_rf_rank = fi_rf.copy()
-            for col in fi_rf_rank.columns[:]:
-                fi_rf_rank[col] = fi_rf_rank[col].rank(ascending=False)
-            list(fi_rf_rank.sort_values(by=0).T)
-            sort_list = list(fi_rf_rank.sort_values(by=0).T)
-            #sort_list
-            initial_num_features = 128
-            final_num_features = 4194304  # max_num
-
-            dfs = []
-            num_features = initial_num_features
-            while num_features <= final_num_features:
-                selected_features = sort_list[:num_features]
-
-                selected_df = selected_features.copy()
-                dfs.append(selected_df)
-
-                num_features *= 2
-
-            for i, df in enumerate(dfs):
-                print(f"DataFrame {i+1}: {df}")
-
-            for i, df in enumerate(dfs):
-                file_name = f"data_{i+1}.npy"
-                np.save(file_name, df)
+        for col in fi_rf_rank.columns[:]:
+            fi_rf_rank[col] = fi_rf_rank[col].rank(ascending=False)
+        list(fi_rf_rank.sort_values(by=0).T)
+        sort_list = list(fi_rf_rank.sort_values(by=0).T)
         
+        #sort_list
+
+        initial_num_features = 128
+        # final_num_features = 4194304  # max_num
+        final_num_features = 8192  # test_max_num
+
+        dfs = []
+        num_features = initial_num_features
+        while num_features <= final_num_features:
+            selected_features = sort_list[:num_features]
+
+            selected_df = selected_features.copy()
+            dfs.append(selected_df)
+
+            num_features *= 2
+
+        X_selected = [] # all_list
+
+        var_names = [] # list_num1...16 
+
+        for i, df in enumerate(dfs):
+            var_name = f"data_{i+1}"
+            globals()[var_name] = df
+            var_names.append(var_name)
+            X_selected.append(np.array(globals()[var_name]))
+
+        print("Name of list:", var_names)
+        """
+        1. X_selected를 Numpy.array로 바꾸는 것을 어떻게 해야할지 고민입니다. 
+        feature selection을 한 각 데이터들은 numpy로 바꾸었는데 한번에 가져오려고하니까 리스트 말고는 생각이 안나고 
+        
+        2. 이를 해결해보려고했더니 밑의 
+        logging.info(f"[progress] '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
+        이 코드에서 Dataframe으로 하신건지 궁금하고, 제가 X_selected를 list로 하다보니 저 부분에서 오류가 발생합니다. 
+
+        3. 마지막으로 이렇게 loop 만든 형태가 위에서 SVM에 넣었을 때 잘 돌아가는지 교수님도 loop로 하신건지 궁금해서 여쭤봅니다.
+        """
     else:
         np.random.seed(1004)
         num_snps_before = X.shape[1]
