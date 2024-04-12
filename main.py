@@ -19,7 +19,6 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier #,GradientBoostingClassifier
 from xgboost import XGBClassifier
-# from sklearn.linear_model import Ridge
 
 from helpers import get_ip_address, has_write_permission, measure_performance
 
@@ -146,7 +145,7 @@ def uni_feature_selection(X, y, score_func, n):
     return(X_selected)
 
 @measure_performance
-def select_feature(X, y, method, n, df = None):
+def select_feature(X, y, method, n, df = None, rf_selection=False): 
     if method == "rf":
         #select feature by random forest method
         if rf_selection == True:
@@ -423,6 +422,8 @@ def main():
 
 
     ## ----- data loader 
+    # merged_support3_variance_0.1 # Real_data
+    # merged_support3_variance_0.1 # Test_data
     target_feature = "merged_support3_variance_0.2499999"
     dataset = data_loader(os.path.join(preprocess_path, target_feature + "_matrix.npy"), 
                        sample_annotation_file)
@@ -430,7 +431,7 @@ def main():
     # df = dataset.get_combined_df()
 
     result_combined = []
-    for feature_select_method in ["random"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
+    for feature_select_method in ["rf"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
         for n_select in [128, 256]:
             X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
             logging.info(f"[progress] '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
