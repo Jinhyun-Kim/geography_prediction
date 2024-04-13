@@ -5,7 +5,6 @@ import numpy as np # type: ignore
 import pickle
 
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import seaborn as sns
 
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -20,9 +19,6 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier #,GradientBoostingClassifier
 from xgboost import XGBClassifier
-
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 
 from helpers import get_ip_address, has_write_permission, measure_performance
 
@@ -88,34 +84,42 @@ class data_loader:
         return df
         
 @measure_performance
-def train_ML(X_train, y_train, X_test, method = "SVM"):#["SVM", "XGB", "DT"]:
+def train_ML(X_train, y_train, X_test, method = "SVM"):
     if method == "SVM":
         params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
         svm_model = SVC(**params, random_state = RANDOM_SEED)
         svm_model.fit(X_train, y_train)    
 
         y_pred = svm_model.predict(X_test)
+        return y_pred
 
-    elif method == "XGB":
-        xgboost_params = {
-            # 'max_depth': 3,
-            'learning_rate': 0.1,
-            # 'n_estimators': 100,
-            'gamma': 0, # default
-            'subsample': 1, # default
-            # 'random_state': random_seed
-        }
-        xgboost_model = XGBClassifier(**xgboost_params)
-        xgboost_model.fit(self.X_train, self.y_train)
-        y_pred = xgboost_model.predict(self.X_test)
+        # #XGB
+        # xgboost_params = {
+        #     # 'max_depth': 3,
+        #     'learning_rate': 0.1,
+        #     # 'n_estimators': 100,
+        #     'gamma': 0, # default
+        #     'subsample': 1, # default
+        #     # 'random_state': random_seed
+        # }
+        
+        # xgboost_model = XGBClassifier(**xgboost_params)
+        # xgboost_model.fit(self.X_train, self.y_train)
 
-    elif method == "DT":
-        decision_tree_model = DecisionTreeClassifier(random_state=42)
-        decision_tree_model.fit(self.X_train, self.y_trainn)
-        y_pred = decision_tree_model.predict(self.X_test)
+        # #DT
+        # decision_tree_model = DecisionTreeClassifier(random_state=42)
+        # decision_tree_model.fit(self.X_train, self.y_trainn)
 
-    return y_pred
+        # #pred
+        # SVM_pred = svm_model.predict(self.X_test)
+        # XGB_pred = xgboost_model.predict(self.X_test)
+        # DT_pred = decision_tree_model.predict(self.X_test)
 
+        # if self.svm == True :
+        #     return SVM_pred
+        # else:
+        #     return SVM_pred, XGB_pred, DT_pred
+    
 def evaluate_performance(y_test, y_pred):
     accuracy = accuracy_score(y_test, y_pred)
     f1_micro = f1_score(y_test, y_pred, average='micro')
@@ -141,7 +145,7 @@ def uni_feature_selection(X, y, score_func, n):
     return(X_selected)
 
 @measure_performance
-def select_feature(X, y, method, n, df = None, rf_selection=True): 
+def select_feature(X, y, n, method,  df = None):
     if method == "rf":
         skf = StratifiedShuffleSplit(n_splits=5, test_size=0.33, random_state=RANDOM_SEED)
         for train_idx, test_idx in skf.split(X, y):
@@ -158,9 +162,9 @@ def select_feature(X, y, method, n, df = None, rf_selection=True):
 
             sort_list = fi.sort_values(by=0).T
             selected_columns = sort_list.columns[:n]
-            
-            X_selected = np.array(X[:, selected_columns])
 
+            X_selected = X[:, selected_columns]
+    
     else:
         np.random.seed(1004)
         num_snps_before = X.shape[1]
@@ -236,6 +240,46 @@ def select_feature(X, y, method, n, df = None, rf_selection=True):
 
     return(X_selected)
 
+########################################################
+
+# class Feature_important:
+
+#     def __init__(self):
+#         pass
+
+#     def Feature_selection(self):
+
+#         StratifiedShuffleSplit
+#         RandomForestClassifier
+#         # list로 추출 -> 저장(파일)
+#         return sort_list
+
+#     def random_sample(self):
+
+#         # list 생성
+#         return list
+
+
+# class train(self):
+    
+#     def model(self, svm = True):
+#         # seed
+#         random_seed =42
+#         random_state = random_seed
+#         SVM_parameter = {'C':, 'gamma':, 'kernel' = }
+#         XGB_parameter = {
+#             # 'max_depth': 3,
+#             'learning_rate': 0.1,
+#             # 'n_estimators': 100,
+#             'gamma': 0, # default
+#             'subsample': 1, # default
+#             # 'random_state': random_seed
+#         }
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 def draw_PCA(X, y):
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(X)
@@ -298,7 +342,7 @@ def main():
 
     ## ----- data loader 
     # merged_support3_variance_0.1 # Real_data
-    # merged_support3_variance_0.1 # Test_data
+    # merged_support3_variance_0.2499999 # Test_data
     target_feature = "merged_support3_variance_0.2499999"
     dataset = data_loader(os.path.join(preprocess_path, target_feature + "_matrix.npy"), 
                        sample_annotation_file)
