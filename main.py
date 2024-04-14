@@ -320,7 +320,7 @@ def get_data_path():
 
 def main():
     target_feature = "merged_support3_variance_0.1" # Real_data
-    target_feature = "merged_support3_variance_0.2499999 " # Test_data
+    # target_feature = "merged_support3_variance_0.2499999" # Test_data
 
     feature_data_path, sample_annotation_file = get_data_path()
 
