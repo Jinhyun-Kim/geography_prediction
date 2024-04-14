@@ -38,20 +38,14 @@ logger.setLevel(logging.INFO)  # Set the minimum logging level
 log_file_handler = logging.FileHandler('logs.txt')
 log_file_handler.setLevel(logging.INFO)  # Set the logging level for the file
 log_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
-log_console_handler = logging.StreamHandler()
-log_console_handler.setLevel(logging.INFO)
-log_console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
 logger.addHandler(log_file_handler)
-logger.addHandler(log_console_handler)
 
-
-
+# log_console_handler = logging.StreamHandler()
+# log_console_handler.setLevel(logging.INFO)
+# log_console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+# logger.addHandler(log_console_handler)
 
 RANDOM_SEED = 42
-
-# ----------------------------------------------------------------------------------------------------------------
 
 class data_loader:
     def __init__(self, X_path, sample_annotation_file):
@@ -123,13 +117,13 @@ def train_ML(X_train, y_train, X_test, method = "SVM"):#["SVM", "XGB", "DT"]:
             # 'random_state': random_seed
         }
         xgboost_model = XGBClassifier(**xgboost_params)
-        xgboost_model.fit(self.X_train, self.y_train)
-        y_pred = xgboost_model.predict(self.X_test)
+        xgboost_model.fit(X_train, y_train)
+        y_pred = xgboost_model.predict(X_test)
 
     elif method == "DT":
-        decision_tree_model = DecisionTreeClassifier(random_state=42)
-        decision_tree_model.fit(self.X_train, self.y_trainn)
-        y_pred = decision_tree_model.predict(self.X_test)
+        decision_tree_model = DecisionTreeClassifier(random_state = RANDOM_SEED)
+        decision_tree_model.fit(X_train, y_train)
+        y_pred = decision_tree_model.predict(X_test)
 
     return y_pred
 
@@ -166,7 +160,7 @@ def uni_feature_selection(X, y, score_func, n):
     return(X_selected)
 
 @measure_performance
-def select_feature(X, y, method, n, df = None, rf_selection=True): 
+def select_feature(X, y, method, n): 
     if method == "rf":
         skf = StratifiedShuffleSplit(n_splits=5, test_size=0.33, random_state=RANDOM_SEED)
         for train_idx, test_idx in skf.split(X, y):
@@ -319,8 +313,8 @@ def get_data_path():
     
 
 def main():
-    target_feature = "merged_support3_variance_0.1" # Real_data
-    # target_feature = "merged_support3_variance_0.2499999" # Test_data
+    # target_feature = "merged_support3_variance_0.1" # Real_data
+    target_feature = "merged_support3_variance_0.2499999" # Test_data
 
     feature_data_path, sample_annotation_file = get_data_path()
 
@@ -338,24 +332,26 @@ def main():
         for power in range(n_select_start_power, n_select_max_power + 2):
             n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
 
+            current_loop = {"select_method": feature_select_method, "select_n": n_select}
+
+            logging.info(f"*************** current loop: {current_loop} ***************")
+
+            try:
+                X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
+            except MemoryError as mem_err:
+                logging.error(f"!! MemoryError encountered while select_feature of {current_loop}: {mem_err}")
+                continue  
+            except Exception as e:
+                logging.error(f"!! An unexpected error occurred while select_feature of {current_loop}: {str(e)}")
+                continue 
+
+            logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
+
+            X_train, X_test = X_selected[train_indices], X_selected[test_indices]
+            y_train, y_test = y[train_indices], y[test_indices]
+
             for train_model in ["SVM", "XGB", "DT"]:
-                current_loop = {"select_method": feature_select_method, "select_n": n_select, "train_model": train_model}
-
-                logging.info(f"*************** current loop: {current_loop} ***************")
-
-                try:
-                    X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
-                except MemoryError as mem_err:
-                    logging.error(f"!! MemoryError encountered while select_feature of {current_loop}: {mem_err}")
-                    continue  
-                except Exception as e:
-                    logging.error(f"!! An unexpected error occurred while select_feature of {current_loop}: {str(e)}")
-                    continue 
-
-                logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
-
-                X_train, X_test = X_selected[train_indices], X_selected[test_indices]
-                y_train, y_test = y[train_indices], y[test_indices]
+                current_loop["train_model"] = train_model
 
                 logging.info(f" - Start {train_model} training: X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} ")
 
@@ -368,7 +364,7 @@ def main():
                     logging.error(f"!! An unexpected error occurred while train_ML of {current_loop}: {str(e)}")
                     continue 
                 eval_metrics = evaluate_performance(y_test, y_pred)
-                logging.info(f' - Train done with Accuracy: {eval_metrics["accuracy"]*100:.4f}, perf_metrics_train: {perf_metric_train}')
+                logging.info(f' - Train done with Accuracy: {eval_metrics["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
 
 
                 merged_metrics = {**current_loop,
