@@ -319,9 +319,8 @@ def get_data_path():
     
 
 def main():
-    # merged_support3_variance_0.1 # Real_data
-    # merged_support3_variance_0.2499999 # Test_data
-    target_feature = "merged_support3_variance_0.1"
+    target_feature = "merged_support3_variance_0.1" # Real_data
+    target_feature = "merged_support3_variance_0.2499999 " # Test_data
 
     feature_data_path, sample_annotation_file = get_data_path()
 
@@ -339,7 +338,7 @@ def main():
         for power in range(n_select_start_power, n_select_max_power + 2):
             n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
 
-            for train_model in ["SVM"]:
+            for train_model in ["SVM", "XGB", "DT"]:
                 current_loop = {"select_method": feature_select_method, "select_n": n_select, "train_model": train_model}
 
                 logging.info(f"*************** current loop: {current_loop} ***************")
