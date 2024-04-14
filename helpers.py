@@ -38,7 +38,7 @@ def measure_performance(func):
         memory_usage_val = result[0] / 1024  # Convert MiB to GiB
 
         performance_data = {
-            'function_name': func.__name__,
+            # 'function_name': func.__name__,
             'cpu_time': cpu_time / 60,  # Convert seconds to minutes
             'wall_time': wall_time / 60,  # Convert seconds to minutes
             'memory_usage': memory_usage_val  # Memory usage in GiB

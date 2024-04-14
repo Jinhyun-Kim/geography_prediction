@@ -26,7 +26,24 @@ import warnings
 warnings.filterwarnings("ignore") # 경고 메시지 무시
 
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Set up logging
+logger = logging.getLogger()  # Get the root logger
+logger.setLevel(logging.INFO)  # Set the minimum logging level
+
+log_file_handler = logging.FileHandler('logs.txt')
+log_file_handler.setLevel(logging.INFO)  # Set the logging level for the file
+log_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+log_console_handler = logging.StreamHandler()
+log_console_handler.setLevel(logging.INFO)
+log_console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+logger.addHandler(log_file_handler)
+logger.addHandler(log_console_handler)
+
+
+
 
 RANDOM_SEED = 42
 
@@ -135,7 +152,15 @@ def evaluate_performance(y_test, y_pred):
     plt.title('Confusion Matrix')
     plt.show()
 
-    return [accuracy, f1_micro, f1_macro, f1_weighted, conf_matrix]
+    metrics = {
+        'accuracy': accuracy,
+        'f1_micro': f1_micro,
+        'f1_macro': f1_macro,
+        'f1_weighted': f1_weighted,
+        'confusion_matrix': conf_matrix  
+    }
+
+    return metrics
 
 def uni_feature_selection(X, y, score_func, n):
     print(f"input array shape : {X.shape}, {y.shape}. n = {n}")
@@ -244,7 +269,7 @@ def select_feature(X, y, method, n, df = None, rf_selection=False):
         3. 마지막으로 이렇게 loop 만든 형태가 위에서 SVM에 넣었을 때 잘 돌아가는지 교수님도 loop로 하신건지 궁금해서 여쭤봅니다.
         """
     else:
-        np.random.seed(1004)
+        np.random.seed(RANDOM_SEED)
         num_snps_before = X.shape[1]
 
         if method in ["random", "variance"]:
@@ -361,56 +386,51 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-def draw_PCA(X, y):
+def draw_PCA(X, y, file_name):
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(X)
 
     plt.figure(figsize=(12, 6))
 
-    plt.subplot(1, 2, 1)
     for label in np.unique(y):
         indices = np.where(y == label)
         plt.scatter(pca_result[indices, 0], pca_result[indices, 1], label=label, alpha=0.5)
-    plt.title(f'PCA of {snp_dataset.genotype_array.shape[1]} SNPs')
+    plt.title(f'PCA of {X.shape[1]} SNPs')
     plt.xlabel('PC1')
     plt.ylabel('PC2')
-    plt.legend(loc=1, prop={'size': 5})
+    plt.legend(loc='best', prop={'size': 10})
 
-    plt.show()
+    plt.savefig(f"{file_name}_PCA.png")
+    plt.show()  # Optionally show the plot
 
-def draw_tSNE(X, y):
+def draw_tSNE(X, y, file_name):
     tsne = TSNE(n_components=2, verbose=1)
     tsne_result = tsne.fit_transform(X)
 
     plt.figure(figsize=(12, 6))
 
-    plt.subplot(1, 2, 2)
     labels_unique = np.unique(y)
     colors = cm.viridis(np.linspace(0, 1, len(labels_unique)))  # Using viridis colormap
 
     for label, color in zip(labels_unique, colors):
         indices = np.where(y == label)
         plt.scatter(tsne_result[indices, 0], tsne_result[indices, 1], label=label, alpha=0.3,
-                    #color=color,
+                    color=color,
                     ) 
 
-    plt.title(f't-SNE of {snp_dataset.genotype_array.shape[1]} SNPs')
+    plt.title(f't-SNE of {X.shape[1]} SNPs')
     plt.xlabel('t-SNE 1')
     plt.ylabel('t-SNE 2')
-    plt.legend(loc=1, prop={'size': 5})
+    plt.legend(loc='best', prop={'size': 10})
 
-    plt.show()
+    plt.savefig(f"{file_name}_tSNE.png")
+    plt.show()  # Optionally show the plot
 
-
-def main():
-    ## ----- setup environment
+def get_data_path():
     data_locations = {
         '223.195.111.48': '/project/datacamp/team11/data',
         '147.47.44.229': '/home/jinhyun/data/1kGP',
     }
-
-    chr_list = [str(x) for x in range(1,23)]
-    gt_dict = {"0|0" :0, "0|1" : 1, "1|0" : 2, "1|1" : 3 } # genotype dict for converting string-> inteter 
 
     raw_data_path = data_locations.get(get_ip_address(), '/not_found')
     sample_annotation_file = os.path.join(raw_data_path, "igsr-1000 genomes 30x on grch38.tsv")
@@ -420,39 +440,74 @@ def main():
     assert os.path.isfile(sample_annotation_file), f"File not exists : {sample_annotation_file}"
     # assert has_write_permission(preprocess_path), f"You do not have write permission for {preprocess_path}"
 
+    return preprocess_path, sample_annotation_file
+    
 
-    ## ----- data loader 
+def main():
     # merged_support3_variance_0.1 # Real_data
-    # merged_support3_variance_0.1 # Test_data
-    target_feature = "merged_support3_variance_0.2499999"
-    dataset = data_loader(os.path.join(preprocess_path, target_feature + "_matrix.npy"), 
-                       sample_annotation_file)
+    # merged_support3_variance_0.2499999 # Test_data
+    target_feature = "merged_support3_variance_0.1"
+
+    feature_data_path, sample_annotation_file = get_data_path()
+
+    dataset = data_loader(os.path.join(feature_data_path, target_feature + "_matrix.npy"), 
+                          sample_annotation_file)
     X, y, train_indices, test_indices = dataset.get_data()
     # df = dataset.get_combined_df()
 
+    n_select_start = 128
+    n_select_max_power = int(np.floor(np.log2(X.shape[1])))
+    n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
+
     result_combined = []
-    for feature_select_method in ["rf"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
-        for n_select in [128, 256]:
-            X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
-            logging.info(f"[progress] '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
+    for feature_select_method in ["random"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
+        for power in range(n_select_start_power, n_select_max_power + 2):
+            n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
 
-            X_train, X_test = X_selected[train_indices], X_selected[test_indices]
-            y_train, y_test = y[train_indices], y[test_indices]
+            for train_model in ["SVM"]:
+                current_loop = {"select_method": feature_select_method, "select_n": n_select, "train_model": train_model}
 
-            logging.info(f"[progress] Start ML training")
-            logging.info(f" - X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} ")
+                logging.info(f"*************** current loop: {current_loop} ***************")
 
-            y_pred, perf_metric_train = train_ML(method = "SVM", X_train = X_train, y_train = y_train, X_test = X_test)
-            logging.info(f"[progress] Train done with perf_metrics_train: {perf_metric_train}")
+                try:
+                    X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
+                except MemoryError as mem_err:
+                    logging.error(f"!! MemoryError encountered while select_feature of {current_loop}: {mem_err}")
+                    continue  
+                except Exception as e:
+                    logging.error(f"!! An unexpected error occurred while select_feature of {current_loop}: {str(e)}")
+                    continue 
 
-            metrics = evaluate_performance(y_test, y_pred)
-            logging.info(f"[progress] Accuracy: {metrics[0]*100:.4f}")
+                logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
 
-    #         result = [] # combine perf_metric_select, perf_metric_train, results
-    #         result_combined.append(result)
+                X_train, X_test = X_selected[train_indices], X_selected[test_indices]
+                y_train, y_test = y[train_indices], y[test_indices]
 
-    # results_df = pd.DataFrame(result_combined)
-    # results_df.to_excel("result.xlsx")
+                logging.info(f" - Start {train_model} training: X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} ")
+
+                try:
+                    y_pred, perf_metric_train = train_ML(method = train_model, X_train = X_train, y_train = y_train, X_test = X_test)
+                except MemoryError as mem_err:
+                    logging.error(f"!! MemoryError encountered while train_ML of {current_loop}: {mem_err}")
+                    continue  
+                except Exception as e:
+                    logging.error(f"!! An unexpected error occurred while train_ML of {current_loop}: {str(e)}")
+                    continue 
+                eval_metrics = evaluate_performance(y_test, y_pred)
+                logging.info(f' - Train done with Accuracy: {eval_metrics["accuracy"]*100:.4f}, perf_metrics_train: {perf_metric_train}')
+
+
+                merged_metrics = {**current_loop,
+                                **{f"select_{k}": v for k, v in perf_metric_select.items()},
+                                **{f"train_{k}": v for k, v in perf_metric_train.items()},
+                                **{f"{k}": v for k, v in eval_metrics.items() if k != 'confusion_matrix'}}
+                result_combined.append(merged_metrics)
+
+
+    results_df = pd.DataFrame(result_combined)
+    print("--------------- Results ---------------")
+    print(results_df)
+    results_df.to_excel("result.xlsx")
 
 
 if __name__ == "__main__":
