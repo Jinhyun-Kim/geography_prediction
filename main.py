@@ -261,10 +261,6 @@ def select_feature(X, y, method, n, df = None, rf_selection=True):
 
     return(X_selected)
 
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 def draw_PCA(X, y, file_name):
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(X)
