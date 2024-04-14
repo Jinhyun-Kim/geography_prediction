@@ -160,25 +160,21 @@ def uni_feature_selection(X, y, score_func, n):
     return(X_selected)
 
 @measure_performance
-def select_feature(X, y, method, n): 
+def select_feature(X, y, method, n, train_idx): 
     if method == "rf":
-        skf = StratifiedShuffleSplit(n_splits=5, test_size=0.33, random_state=RANDOM_SEED)
-        for train_idx, test_idx in skf.split(X, y):
-            X_train, X_test = X[train_idx, :-1], X[test_idx, :-1]
-            y_train, y_test = y[train_idx], y[test_idx]
+        X_train = X[train_idx]
+        y_train = y[train_idx]
 
-            clf = RandomForestClassifier(n_estimators=1000)
-            clf.fit(X_train, y_train)
+        clf = RandomForestClassifier(n_estimators=1000)
+        clf.fit(X_train, y_train)
 
-            fi = clf.feature_importances_
+        fi = clf.feature_importances_
 
-            fi = pd.DataFrame(fi)
-            fi = fi.rank(axis=1, ascending=False)
+        fi_series = pd.Series(fi)
+        selected_indices = fi_series.nlargest(n).index
+        
+        X_selected = X[:, selected_indices]
 
-            sort_list = fi.sort_values(by=0).T
-            selected_columns = sort_list.columns[:n]
-            
-            X_selected = np.array(X[:, selected_columns])
 
     else:
         np.random.seed(RANDOM_SEED)
@@ -328,7 +324,7 @@ def main():
     n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
 
     result_combined = []
-    for feature_select_method in ["random"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
+    for feature_select_method in ["rf"]:#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]:
         for power in range(n_select_start_power, n_select_max_power + 2):
             n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
 
@@ -337,7 +333,7 @@ def main():
             logging.info(f"*************** current loop: {current_loop} ***************")
 
             try:
-                X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select)
+                X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select, train_idx = train_indices)
             except MemoryError as mem_err:
                 logging.error(f"!! MemoryError encountered while select_feature of {current_loop}: {mem_err}")
                 continue  
