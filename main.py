@@ -99,32 +99,44 @@ class data_loader:
         return df
         
 @measure_performance
-def train_ML(X_train, y_train, X_test, method = "SVM"):#["SVM", "XGB", "DT"]:
+def train_ML(X_train, y_train, X_test, method = "SVM"):
     if method == "SVM":
         params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
-        svm_model = SVC(**params, random_state = RANDOM_SEED)
-        svm_model.fit(X_train, y_train)    
+        model = SVC(**params, random_state = RANDOM_SEED)
 
-        y_pred = svm_model.predict(X_test)
 
     elif method == "XGB":
         xgboost_params = {
+            # 'n_estimators': 100,
             # 'max_depth': 3,
             'learning_rate': 0.1,
-            # 'n_estimators': 100,
             'gamma': 0, # default
             'subsample': 1, # default
+            #'use_label_encoder': False,  # XGBoost >= 1.3.0 requires this to avoid a deprecation warning
+            #'eval_metric': 'mlogloss'  # Necessary for multiclass classification
         }
-        xgboost_model = XGBClassifier(**xgboost_params, random_state = RANDOM_SEED)
-        xgboost_model.fit(X_train, y_train)
-        y_pred = xgboost_model.predict(X_test)
+        model = XGBClassifier(**xgboost_params, random_state = RANDOM_SEED)
 
     elif method == "DT":
-        decision_tree_model = DecisionTreeClassifier(random_state = RANDOM_SEED)
-        decision_tree_model.fit(X_train, y_train)
-        y_pred = decision_tree_model.predict(X_test)
+        model = DecisionTreeClassifier(random_state = RANDOM_SEED)
 
-    return y_pred
+    elif method == "RF":
+        random_forest_params = {
+            'n_estimators': 1000, #default: 100
+        }
+        model = RandomForestClassifier(**random_forest_params, random_state=RANDOM_SEED)
+
+    elif method == "KNN":
+        model = KNeighborsClassifier(n_neighbors=5)
+
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+
+    model.fit(X_train, y_train)    
+    y_pred = model.predict(X_test)
+    y_pred_train = model.predict(X_train)
+
+    return (y_pred, y_pred_train)
 
 def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
     accuracy = accuracy_score(y_test, y_pred)
@@ -164,7 +176,6 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
     }
 
     return metrics
-
 
 @measure_performance
 def select_feature(X, y, method, n, train_idx): 
@@ -315,9 +326,9 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["rf", "random", "variance", "chi2", "f_classif", "mutual_info_classif"]
+    select_methods = ["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]
 
-    ML_models = ["SVM", "XGB", "DT"]
+    ML_models = ["RF"] #["SVM", "XGB", "DT", "RF", "KNN"]
 
     ### code start -----
     feature_data_path, sample_annotation_file = get_data_path(save_data_path)
@@ -346,12 +357,13 @@ def main():
 
             logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
 
-            try:
-                save_file_prefix = os.path.join(save_data_path, f"{feature_select_method}_{n_select}")
-                draw_PCA(X = X_selected, y = y_original, file_name=save_file_prefix)
-                # draw_tSNE(X = X_selected, y = y_original, file_name=save_file_prefix)
-            except Exception as e:
-                logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
+            # if feature_select_method == "random":
+            #     try:
+            #         save_file_prefix = os.path.join(save_data_path, f"{feature_select_method}_{n_select}")
+            #         draw_PCA(X = X_selected, y = y_original, file_name=save_file_prefix)
+            #         # draw_tSNE(X = X_selected, y = y_original, file_name=save_file_prefix)
+            #     except Exception as e:
+            #         logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
 
             X_train, X_test = X_selected[train_indices], X_selected[test_indices]
             y_train, y_test = y[train_indices], y[test_indices]
@@ -362,18 +374,21 @@ def main():
                 logging.info(f" - Start {train_model} training: X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} ")
 
                 try:
-                    y_pred, perf_metric_train = train_ML(method = train_model, X_train = X_train, y_train = y_train, X_test = X_test) 
+                    (y_pred, y_pred_train), perf_metric_train = train_ML(method = train_model, X_train = X_train, y_train = y_train, X_test = X_test) 
                 except Exception as e:
                     logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
                     continue 
-                eval_metrics = evaluate_performance(y_test, y_pred, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}"))
+                eval_metrics = evaluate_performance(y_test, y_pred, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_test"))
+                eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_train"))
                 logging.info(f' - Train done with Accuracy: {eval_metrics["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
 
 
                 merged_metrics = {**current_loop,
                                 **{f"select_{k}": v for k, v in perf_metric_select.items()},
                                 **{f"train_{k}": v for k, v in perf_metric_train.items()},
-                                **{f"{k}": v for k, v in eval_metrics.items() if k != 'confusion_matrix'}}
+                                **{f"{k}": v for k, v in eval_metrics.items() if k != 'confusion_matrix'},
+                                **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
+                                }
                 result_combined.append(merged_metrics)
 
                 ## update the dataframe
