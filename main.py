@@ -59,10 +59,32 @@ class data_loader:
 
         self.drop_notusing_sample()
         self.y_encoded, self.label_mapping = self.encode_y()
-        self.train_indices, self.test_indices = self.split_dataset()
+        self.train_indices, self.val_indices, self.test_indices = self.split_dataset(val_size=0.2, test_size=0.2)
+
+        logging.info(f" - Data_split: train_set (n= {len(self.train_indices)}), val_set (n= {len(self.val_indices)}), test_set (n= {len(self.test_indices)})")
+
+        # print("class distribution: ", self.y.value_counts())
 
         assert self.X.shape[0] == self.y.shape[0]
         assert self.X.shape[0] == self.y_encoded.shape[0]
+        assert self.test_index_coverage(self.train_indices, self.val_indices, self.test_indices, self.X.shape[0])
+
+
+    def test_index_coverage(self, train_indices, val_indices, test_indices, total_length):
+        combined_indices = np.concatenate((train_indices, val_indices, test_indices))
+        unique_indices = np.unique(combined_indices)
+
+        # Check if the concatenated indices cover all possible indices
+        expected_indices = np.arange(total_length)
+
+        if np.array_equal(np.sort(unique_indices), expected_indices):
+            return True
+        else:
+            missing_indices = np.setdiff1d(expected_indices, unique_indices)
+            extra_indices = np.setdiff1d(unique_indices, expected_indices)
+            print(f"Missing indices: {missing_indices}")
+            print(f"Extra indices: {extra_indices}")
+            return False
 
     def drop_notusing_sample(self):
         indices_to_drop = self.sample_annotation_df[self.sample_annotation_df[self.target_label_name] == 'IBS,MSL'].index
@@ -81,14 +103,24 @@ class data_loader:
 
         return y_encoded, label_mapping
 
-    def split_dataset(self):
-        sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state = RANDOM_SEED_DATASET)
-        train_indices, test_indices = next(sss.split(self.X, self.y))
-        return(train_indices, test_indices)
+    def split_dataset(self, val_size=0.15, test_size=0.15):
+
+        sss = StratifiedShuffleSplit(n_splits=1, test_size = test_size, random_state = RANDOM_SEED)
+        train_val_idx, test_indices = next(sss.split(self.X, self.y_encoded))
+
+        adjusted_val_size = val_size / (1 - test_size)
+
+        sss_val = StratifiedShuffleSplit(n_splits=1, test_size=adjusted_val_size, random_state=RANDOM_SEED)
+        train_idx, val_idx = next(sss_val.split(self.X[train_val_idx], self.y_encoded[train_val_idx]))
+
+        train_indices = train_val_idx[train_idx]
+        val_indices = train_val_idx[val_idx]
+
+        return train_indices, val_indices, test_indices
 
 
     def get_data(self):
-        return self.X, np.array(self.y), self.y_encoded, self.train_indices, self.test_indices, self.label_mapping
+        return (self.X, np.array(self.y), self.y_encoded), (self.train_indices, self.val_indices, self.test_indices), self.label_mapping
         
     def get_combined_df(self):
         df = pd.DataFrame(self.X)
@@ -99,32 +131,30 @@ class data_loader:
         return df
         
 @measure_performance
-def train_ML(X_train, y_train, X_test, method = "SVM"):
+def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
     if method == "SVM":
-        params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
+        # params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
         model = SVC(**params, random_state = RANDOM_SEED)
-
-
     elif method == "XGB":
-        xgboost_params = {
-            # 'n_estimators': 100,
-            # 'max_depth': 3,
-            'learning_rate': 0.1,
-            'gamma': 0, # default
-            'subsample': 1, # default
-            #'use_label_encoder': False,  # XGBoost >= 1.3.0 requires this to avoid a deprecation warning
-            #'eval_metric': 'mlogloss'  # Necessary for multiclass classification
-        }
-        model = XGBClassifier(**xgboost_params, random_state = RANDOM_SEED)
+        # params = {
+        #     # 'n_estimators': 100,
+        #     # 'max_depth': 3,
+        #     'learning_rate': 0.1,
+        #     'gamma': 0, # default
+        #     'subsample': 1, # default
+        #     #'use_label_encoder': False,  # XGBoost >= 1.3.0 requires this to avoid a deprecation warning
+        #     #'eval_metric': 'mlogloss'  # Necessary for multiclass classification
+        # }
+        model = XGBClassifier(**params, random_state = RANDOM_SEED)
 
     elif method == "DT":
         model = DecisionTreeClassifier(random_state = RANDOM_SEED)
 
     elif method == "RF":
-        random_forest_params = {
-            'n_estimators': 1000, #default: 100
-        }
-        model = RandomForestClassifier(**random_forest_params, random_state=RANDOM_SEED)
+        # params = {
+        #     'n_estimators': 1000, #default: 100
+        # }
+        model = RandomForestClassifier(**params, random_state=RANDOM_SEED)
 
     elif method == "KNN":
         model = KNeighborsClassifier(n_neighbors=5)
@@ -133,10 +163,11 @@ def train_ML(X_train, y_train, X_test, method = "SVM"):
         raise ValueError(f"Unsupported method: {method}")
 
     model.fit(X_train, y_train)    
-    y_pred = model.predict(X_test)
     y_pred_train = model.predict(X_train)
+    y_pred_val = model.predict(X_val)
+    y_pred_test = model.predict(X_test)
 
-    return (y_pred, y_pred_train)
+    return (y_pred_train, y_pred_val, y_pred_test, model.get_params())
 
 def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
     accuracy = accuracy_score(y_test, y_pred)
@@ -172,7 +203,7 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
         'f1_macro': f1_macro,
         'f1_weighted': f1_weighted,
         'confusion_matrix': conf_matrix,
-        **class_metrics
+        # **class_metrics
     }
 
     return metrics
@@ -326,16 +357,35 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"]
+    select_methods = ["random"]#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
 
-    ML_models = ["RF"] #["SVM", "XGB", "DT", "RF", "KNN"]
+    ML_models = ["SVM"] #["SVM", "XGB", "DT", "RF", "KNN"]
+    hyper_params = {
+        "SVM": [{'C': 0.1, 'kernel': 'linear', 'gamma': 'auto'},  # Linear kernel with low regularization
+                {'C': 1, 'kernel': 'linear', 'gamma': 'scale'},   # Linear kernel with more regularization
+                {'C': 10, 'kernel': 'linear', 'gamma': 'auto'},   # Higher regularization
+                
+                {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                {'C': 1, 'kernel': 'rbf', 'gamma': 'auto'},       # RBF kernel, automatic gamma
+                {'C': 10, 'kernel': 'rbf', 'gamma': 0.01},        # RBF with specific low gamma
+                {'C': 50, 'kernel': 'rbf', 'gamma': 0.1},         # RBF with higher C and moderate gamma
+                {'C': 100, 'kernel': 'rbf', 'gamma': 1},          # RBF with high C and gamma
+                
+                {'C': 0.5, 'kernel': 'sigmoid', 'gamma': 'auto'}, # Sigmoid kernel, low C
+                {'C': 2, 'kernel': 'sigmoid', 'gamma': 'scale'}   # Sigmoid kernel with scaled gamma
+                ],
+        "RF": [{'n_estimators': 100, 'max_features': 'sqrt'},
+               {'n_estimators': 200, 'max_features': 'log2'}
+               ],
+    }
+
 
     ### code start -----
     feature_data_path, sample_annotation_file = get_data_path(save_data_path)
 
     dataset = data_loader(os.path.join(feature_data_path, target_feature + "_matrix.npy"), 
                           sample_annotation_file)
-    X, y_original, y, train_indices, test_indices, label_mapping = dataset.get_data()
+    (X, y_original, y), (train_indices, val_indices, test_indices), label_mapping = dataset.get_data()
 
     n_select_max_power = int(np.floor(np.log2(X.shape[1])))
     n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
@@ -344,8 +394,9 @@ def main():
     for feature_select_method in select_methods:
         for power in range(n_select_start_power, n_select_max_power + 2):
             n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
+            # n_select = 131072
 
-            current_loop = {"select_method": feature_select_method, "select_n": n_select}
+            current_loop = {"randon_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
             logging.info(f"*************** current loop: {current_loop} ***************")
 
@@ -365,35 +416,44 @@ def main():
             #     except Exception as e:
             #         logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
 
-            X_train, X_test = X_selected[train_indices], X_selected[test_indices]
-            y_train, y_test = y[train_indices], y[test_indices]
+            X_train, X_val, X_test = X_selected[train_indices], X_selected[val_indices], X_selected[test_indices]
+            y_train, y_val, y_test = y[train_indices], y[val_indices], y[test_indices]
 
             for train_model in ML_models:
-                current_loop["train_model"] = train_model
+                for hyper_param_index, current_hyper_param in enumerate(hyper_params[train_model]):
+                    current_loop["train_model"] = train_model
 
-                logging.info(f" - Start {train_model} training: X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} ")
+                    logging.info(f" - Start {train_model} training: X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} with hyper_param {current_hyper_param}")
 
-                try:
-                    (y_pred, y_pred_train), perf_metric_train = train_ML(method = train_model, X_train = X_train, y_train = y_train, X_test = X_test) 
-                except Exception as e:
-                    logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
-                    continue 
-                eval_metrics = evaluate_performance(y_test, y_pred, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_test"))
-                eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_train"))
-                logging.info(f' - Train done with Accuracy: {eval_metrics["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
+                    try:
+                        (y_pred_train, y_pred_val, y_pred_test, train_params), perf_metric_train = train_ML(method = train_model, 
+                                                                            X_train = X_train, y_train = y_train, 
+                                                                            X_val = X_val, y_val = y_val, 
+                                                                            X_test = X_test,
+                                                                            params = current_hyper_param) 
+                    except Exception as e:
+                        logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                        continue 
+                    eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_train"))
+                    eval_metrics_val = evaluate_performance(y_val, y_pred_val, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_val"))
+                    eval_metrics_test = evaluate_performance(y_test, y_pred_test, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_test"))
+                    logging.info(f' - Train done with Accuracy: {eval_metrics_test["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
 
 
-                merged_metrics = {**current_loop,
-                                **{f"select_{k}": v for k, v in perf_metric_select.items()},
-                                **{f"train_{k}": v for k, v in perf_metric_train.items()},
-                                **{f"{k}": v for k, v in eval_metrics.items() if k != 'confusion_matrix'},
-                                **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
-                                }
-                result_combined.append(merged_metrics)
+                    merged_metrics = {**current_loop,
+                                    "hyper_params" : str(current_hyper_param),
+                                    "model_params" : str(train_params),
+                                    **{f"select_{k}": v for k, v in perf_metric_select.items()},
+                                    **{f"train_{k}": v for k, v in perf_metric_train.items()},
+                                    **{f"testset_{k}": v for k, v in eval_metrics_test.items() if k != 'confusion_matrix'},
+                                    **{f"valset_{k}": v for k, v in eval_metrics_val.items() if k != 'confusion_matrix'},
+                                    **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
+                                    }
+                    result_combined.append(merged_metrics)
 
-                ## update the dataframe
-                results_df = pd.DataFrame(result_combined)
-                results_df.to_excel(os.path.join(save_data_path, "results.xlsx"), index = False)
+                    ## update the dataframe
+                    results_df = pd.DataFrame(result_combined)
+                    results_df.to_excel(os.path.join(save_data_path, "results.xlsx"), index = False)
 
 
 
