@@ -133,7 +133,6 @@ class data_loader:
 @measure_performance
 def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
     if method == "SVM":
-        # params = {'C': 0.1, 'gamma': 0.01, 'kernel': 'linear'} 
         model = SVC(**params, random_state = RANDOM_SEED)
     elif method == "XGB":
         # params = {
@@ -194,7 +193,7 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
     plt.ylabel('Actual')
     plt.title('Confusion Matrix')
 
-    plt.savefig(f"{save_file_previx}_confusion_matrix.pdf", dpi = 300)
+    # plt.savefig(f"{save_file_previx}_confusion_matrix.pdf", dpi = 300)
     plt.show()
 
     metrics = {
@@ -283,6 +282,16 @@ def select_feature(X, y, method, n, train_idx):
 
     return(X_selected)
 
+def PCA_transform(X_train, X_val, X_test, n):
+    pca = PCA(n_components = n)
+    pca.fit(X_train)
+    
+    X_train_pca = pca.transform(X_train)
+    X_val_pca = pca.transform(X_val)
+    X_test_pca = pca.transform(X_test)
+
+    return X_train_pca, X_val_pca, X_test_pca
+
 def draw_PCA(X, y, file_name):
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(X)
@@ -359,12 +368,17 @@ def main():
     n_select_start = 128
     select_methods = ["random"]#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
 
+    n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
+
     ML_models = ["SVM"] #["SVM", "XGB", "DT", "RF", "KNN"]
     hyper_params = {
-        "SVM": [{'C': 0.1, 'kernel': 'linear', 'gamma': 'auto'},  # Linear kernel with low regularization
+        "SVM": [{'C': 0.1, 'kernel': 'linear', 'gamma': 0.01},    # previous best params
+                {'C': 0.01, 'kernel': 'linear', 'gamma': 'scale'},  # Linear kernel with low regularization
+                {'C': 0.1, 'kernel': 'linear', 'gamma': 'auto'},  # Linear kernel with low regularization
                 {'C': 1, 'kernel': 'linear', 'gamma': 'scale'},   # Linear kernel with more regularization
                 {'C': 10, 'kernel': 'linear', 'gamma': 'auto'},   # Higher regularization
                 
+                {'C': 0.01, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
                 {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
                 {'C': 1, 'kernel': 'rbf', 'gamma': 'auto'},       # RBF kernel, automatic gamma
                 {'C': 10, 'kernel': 'rbf', 'gamma': 0.01},        # RBF with specific low gamma
@@ -392,9 +406,9 @@ def main():
 
     result_combined = []
     for feature_select_method in select_methods:
-        for power in range(n_select_start_power, n_select_max_power + 2):
-            n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-            # n_select = 131072
+        # for power in range(n_select_start_power, n_select_max_power + 2):
+        #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
+        for n_select in [128, 1024, 8192, 131072]:
 
             current_loop = {"randon_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
@@ -416,44 +430,63 @@ def main():
             #     except Exception as e:
             #         logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
 
+            # X_selected_flatten = X_selected.reshape(X_selected.shape[0], -1) #flatten last feature dims
             X_train, X_val, X_test = X_selected[train_indices], X_selected[val_indices], X_selected[test_indices]
             y_train, y_val, y_test = y[train_indices], y[val_indices], y[test_indices]
+            
+            for n_dim_reduced in n_dim_reduce_list:
+                if (n_dim_reduced is None): # use whole feature
+                    current_loop["n_dim_reduced"] = n_select
+                    X_train_reduced, X_val_reduced, X_test_reduced = X_train, X_val, X_test 
+                    logging.info(f" - Using whole features for training: X_train.shape = {X_train_reduced.shape}")
+                else:
+                    if (n_dim_reduced < n_select):
+                        current_loop["n_dim_reduced"] = n_dim_reduced
+                        try:
+                            X_train_reduced, X_val_reduced, X_test_reduced = PCA_transform(X_train, X_val, X_test, n = n_dim_reduced)
+                            logging.info(f" - Selected {n_dim_reduced} features using PCA: X_train_reduced.shape = {X_train_reduced.shape}")
+                        except Exception as e:
+                            logging.error(f"An unexpected error occurred while PCA_transform of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                            continue
+                    else:
+                        continue
+                    
+            
+                for train_model in ML_models:
+                    for hyper_param_index, current_hyper_param in enumerate(hyper_params[train_model]):
+                        current_loop["train_model"] = train_model
 
-            for train_model in ML_models:
-                for hyper_param_index, current_hyper_param in enumerate(hyper_params[train_model]):
-                    current_loop["train_model"] = train_model
+                        logging.info(f" - Start {train_model} training: X_train.shape = {X_train_reduced.shape} X_test.shape = {X_test_reduced.shape} with hyper_param {current_hyper_param}")
 
-                    logging.info(f" - Start {train_model} training: X_train.shape = {X_train.shape} X_test.shape = {X_test.shape} with hyper_param {current_hyper_param}")
-
-                    try:
-                        (y_pred_train, y_pred_val, y_pred_test, train_params), perf_metric_train = train_ML(method = train_model, 
-                                                                            X_train = X_train, y_train = y_train, 
-                                                                            X_val = X_val, y_val = y_val, 
-                                                                            X_test = X_test,
-                                                                            params = current_hyper_param) 
-                    except Exception as e:
-                        logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
-                        continue 
-                    eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_train"))
-                    eval_metrics_val = evaluate_performance(y_val, y_pred_val, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_val"))
-                    eval_metrics_test = evaluate_performance(y_test, y_pred_test, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_test"))
-                    logging.info(f' - Train done with Accuracy: {eval_metrics_test["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
+                        try:
+                            (y_pred_train, y_pred_val, y_pred_test, train_params), perf_metric_train = train_ML(method = train_model, 
+                                                                                X_train = X_train_reduced, y_train = y_train, 
+                                                                                X_val = X_val_reduced, y_val = y_val, 
+                                                                                X_test = X_test_reduced,
+                                                                                params = current_hyper_param) 
+                        except Exception as e:
+                            logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                            continue 
+                        eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_train"))
+                        eval_metrics_val = evaluate_performance(y_val, y_pred_val, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_val"))
+                        eval_metrics_test = evaluate_performance(y_test, y_pred_test, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_test"))
+                        logging.info(f' - Train done with Accuracy: {eval_metrics_test["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
 
 
-                    merged_metrics = {**current_loop,
-                                    "hyper_params" : str(current_hyper_param),
-                                    "model_params" : str(train_params),
-                                    **{f"select_{k}": v for k, v in perf_metric_select.items()},
-                                    **{f"train_{k}": v for k, v in perf_metric_train.items()},
-                                    **{f"testset_{k}": v for k, v in eval_metrics_test.items() if k != 'confusion_matrix'},
-                                    **{f"valset_{k}": v for k, v in eval_metrics_val.items() if k != 'confusion_matrix'},
-                                    **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
-                                    }
-                    result_combined.append(merged_metrics)
+                        merged_metrics = {**current_loop,
+                                        "hyper_params" : str(current_hyper_param),
+                                        "model_params" : str(train_params),
+                                        **{f"select_{k}": v for k, v in perf_metric_select.items()},
+                                        **{f"train_{k}": v for k, v in perf_metric_train.items()},
+                                        **{f"testset_{k}": v for k, v in eval_metrics_test.items() if k != 'confusion_matrix'},
+                                        **{f"valset_{k}": v for k, v in eval_metrics_val.items() if k != 'confusion_matrix'},
+                                        **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
+                                        }
+                        result_combined.append(merged_metrics)
 
-                    ## update the dataframe
-                    results_df = pd.DataFrame(result_combined)
-                    results_df.to_excel(os.path.join(save_data_path, "results.xlsx"), index = False)
+                        ## update the dataframe
+                        results_df = pd.DataFrame(result_combined)
+                        results_df.to_excel(os.path.join(save_data_path, "results.xlsx"), index = False)
 
 
 
