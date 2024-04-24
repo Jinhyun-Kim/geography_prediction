@@ -1,4 +1,4 @@
-name: py39
+name: geography
 channels:
   - defaults
 dependencies:
@@ -144,4 +144,4 @@ dependencies:
       - widgetsnbextension==4.0.9
       - xgboost==2.0.3
       - zipp==3.17.0
-prefix: /home/jinhyun/anaconda3/envs/py39
+prefix: /home/jinhyun/anaconda3/envs/geography

@@ -13,11 +13,13 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, precision_recall_fscore_support #, roc_curve, roc_auc_score, recall_score, precision_score,
 from sklearn.preprocessing import LabelEncoder#, StandardScaler
 from sklearn.model_selection import StratifiedShuffleSplit
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier #, ExtraTreesClassifier,GradientBoostingClassifier
-from sklearn.decomposition import PCA
+
+from sklearn.decomposition import PCA, KernelPCA
 from sklearn.manifold import TSNE
+# from umap import UMAP
 
 from xgboost import XGBClassifier
 
@@ -134,25 +136,27 @@ class data_loader:
 def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
     if method == "SVM":
         model = SVC(**params, random_state = RANDOM_SEED)
+    elif method == "LinearSVM":
+        model = LinearSVC(penalty='l1', dual= "auto", **params, random_state=RANDOM_SEED)
     elif method == "XGB":
-        # params = {
-        #     # 'n_estimators': 100,
-        #     # 'max_depth': 3,
-        #     'learning_rate': 0.1,
-        #     'gamma': 0, # default
-        #     'subsample': 1, # default
-        #     #'use_label_encoder': False,  # XGBoost >= 1.3.0 requires this to avoid a deprecation warning
-        #     #'eval_metric': 'mlogloss'  # Necessary for multiclass classification
-        # }
-        model = XGBClassifier(**params, random_state = RANDOM_SEED)
+        model = XGBClassifier(**params, 
+                              objective='multi:softmax',  # Use softmax for multi-class classification
+                              num_class=len(np.unique(y_train)),  # Number of classes
+                              use_label_encoder=False,
+                              eval_metric='mlogloss',  # Metric used for multiclass classification
+                              random_state = RANDOM_SEED)
+        
+        eval_set = [(X_train, y_train), (X_val, y_val)]
+        model.fit(X_train, y_train, early_stopping_rounds=10, eval_metric="mlogloss", eval_set=eval_set, verbose=True)
+        y_pred_train = model.predict(X_train, ntree_limit=model.best_ntree_limit)
+        y_pred_val = model.predict(X_val, ntree_limit=model.best_ntree_limit)
+        y_pred_test = model.predict(X_test, ntree_limit=model.best_ntree_limit)
+        return (y_pred_train, y_pred_val, y_pred_test, model.get_params())
 
     elif method == "DT":
         model = DecisionTreeClassifier(random_state = RANDOM_SEED)
 
     elif method == "RF":
-        # params = {
-        #     'n_estimators': 1000, #default: 100
-        # }
         model = RandomForestClassifier(**params, random_state=RANDOM_SEED)
 
     elif method == "KNN":
@@ -208,8 +212,48 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
     return metrics
 
 @measure_performance
-def select_feature(X, y, method, n, train_idx): 
-    if method == "rf":
+def select_feature(X, y, method, n, train_idx, val_idx): 
+    if method == "xgb":
+        X_train, X_val = X[train_idx], X[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+
+        raise NotImplemented # not validated
+
+        xgb_model = XGBClassifier(
+            n_estimators=1000,  # Start with a large number and rely on early stopping. default 100
+            learning_rate=0.1, # default 0.1
+            gamma=0.1,  # Adjust gamma, might require tuning. default 0
+            subsample=0.8,  # Subsample ratio of the training instance. default 1
+            colsample_bytree=0.8,  # Subsample ratio of columns when constructing each tree. default 1
+            objective='multi:softmax',  # Use softmax for multi-class classification
+            num_class=len(np.unique(y)),  # Number of classes
+            use_label_encoder=False,
+            eval_metric='mlogloss',  # Metric used for multiclass classification
+            random_state=RANDOM_SEED
+        )
+
+        xgb_model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            early_stopping_rounds=50,  # Stop if the validation metric does not improve in 50 rounds
+            verbose=False  # Set to True if you want to see the progress
+        )
+        
+        # Get feature importances and select the top 'n' features
+        fi = xgb_model.feature_importances_
+        fi_series = pd.Series(fi)
+        print(fi_series)
+        selected_indices = fi_series.nlargest(n).index
+        X_selected = X[:, selected_indices]
+        print(X_selected.shape)
+
+        validation_score = xgb_model.best_score
+        print(validation_score)
+        pass
+
+    elif method == "rf":
+        if len(X.shape) >= 3:
+            raise NotImplemented
         X_train = X[train_idx]
         y_train = y[train_idx]
 
@@ -282,15 +326,23 @@ def select_feature(X, y, method, n, train_idx):
 
     return(X_selected)
 
-def PCA_transform(X_train, X_val, X_test, n):
-    pca = PCA(n_components = n)
-    pca.fit(X_train)
-    
-    X_train_pca = pca.transform(X_train)
-    X_val_pca = pca.transform(X_val)
-    X_test_pca = pca.transform(X_test)
+def feature_transform(X_train, X_val, X_test, n, method='PCA'):
+    if method == 'PCA':
+        transformer = PCA(n_components=n)
+    elif method == 'KernelPCA':
+        transformer = KernelPCA(n_components=n, kernel='rbf')  # kernel can be changed based on requirement
+    # elif method == 'UMAP':
+    #     transformer = UMAP(n_components=n)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
 
-    return X_train_pca, X_val_pca, X_test_pca
+    transformer.fit(X_train)
+    
+    X_train_transformed = transformer.transform(X_train)
+    X_val_transformed = transformer.transform(X_val)
+    X_test_transformed = transformer.transform(X_test)
+
+    return X_train_transformed, X_val_transformed, X_test_transformed
 
 def draw_PCA(X, y, file_name):
     pca = PCA(n_components=2)
@@ -363,59 +415,87 @@ def main():
     ### arguments -----
     target_feature = "merged_support3_variance_0.1" # Real_data
     # target_feature = "merged_random_1k" # Test_data
+    target_feature_suffix = "_matrix.npy"
+    # target_feature_suffix = "_matrix_onehot.npy"
+
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["random"]#["random", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["random"]#["random", "xgb", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
 
     n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["SVM"] #["SVM", "XGB", "DT", "RF", "KNN"]
+    ML_models = ["XGB"] #["SVM", "XGB", "RF", "DT", "KNN"]
     hyper_params = {
-        "SVM": [{'C': 0.1, 'kernel': 'linear', 'gamma': 0.01},    # previous best params
-                {'C': 0.01, 'kernel': 'linear', 'gamma': 'scale'},  # Linear kernel with low regularization
-                {'C': 0.1, 'kernel': 'linear', 'gamma': 'auto'},  # Linear kernel with low regularization
-                {'C': 1, 'kernel': 'linear', 'gamma': 'scale'},   # Linear kernel with more regularization
-                {'C': 10, 'kernel': 'linear', 'gamma': 'auto'},   # Higher regularization
-                
-                {'C': 0.01, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                {'C': 1, 'kernel': 'rbf', 'gamma': 'auto'},       # RBF kernel, automatic gamma
-                {'C': 10, 'kernel': 'rbf', 'gamma': 0.01},        # RBF with specific low gamma
-                {'C': 50, 'kernel': 'rbf', 'gamma': 0.1},         # RBF with higher C and moderate gamma
-                {'C': 100, 'kernel': 'rbf', 'gamma': 1},          # RBF with high C and gamma
-                
-                {'C': 0.5, 'kernel': 'sigmoid', 'gamma': 'auto'}, # Sigmoid kernel, low C
-                {'C': 2, 'kernel': 'sigmoid', 'gamma': 'scale'}   # Sigmoid kernel with scaled gamma
+        "SVM": [{'C': 0.1, 'kernel': 'linear'},    # previous best params
+                {'C': 0.0001, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.0002, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.0004, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.0006, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.0008, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.001, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.002, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.004, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.008, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.01, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 0.1, 'kernel': 'linear'},  # Linear kernel with low regularization
+                {'C': 1, 'kernel': 'linear'},   # Linear kernel with more regularization
+                {'C': 10, 'kernel': 'linear'},   # Higher regularization
+                # {'C': 0.001, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 0.01, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 0.2, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 0.4, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 0.6, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 0.8, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # {'C': 1, 'kernel': 'rbf', 'gamma': 'auto'},       # RBF kernel, automatic gamma
+                # {'C': 10, 'kernel': 'rbf', 'gamma': 0.01},        # RBF with specific low gamma
+                # {'C': 50, 'kernel': 'rbf', 'gamma': 0.1},         # RBF with higher C and moderate gamma
+                # {'C': 100, 'kernel': 'rbf', 'gamma': 1},          # RBF with high C and gamma
+                # {'C': 0.5, 'kernel': 'sigmoid', 'gamma': 'auto'}, # Sigmoid kernel, low C
+                # {'C': 2, 'kernel': 'sigmoid', 'gamma': 'scale'}   # Sigmoid kernel with scaled gamma
                 ],
-        "RF": [{'n_estimators': 100, 'max_features': 'sqrt'},
-               {'n_estimators': 200, 'max_features': 'log2'}
-               ],
-    }
+        "RF": [
+            {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
+            {'n_estimators': 1000}, # previous overfit
+            {'n_estimators': 100, 'max_features': 'log2', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
+            {'n_estimators': 100, 'max_features': 'log2', 'max_depth': None, 'min_samples_split': 10, 'min_samples_leaf': 10},
+            {'n_estimators': 100, 'max_features': 'log2', 'max_depth': 10, 'min_samples_split': 10, 'min_samples_leaf': 10},
+        ],
 
+        "XGB": [
+            {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
+            {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.01, 'n_estimators': 100, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
+        ]
+    }
 
     ### code start -----
     feature_data_path, sample_annotation_file = get_data_path(save_data_path)
 
-    dataset = data_loader(os.path.join(feature_data_path, target_feature + "_matrix.npy"), 
+    dataset = data_loader(os.path.join(feature_data_path, target_feature + target_feature_suffix), 
                           sample_annotation_file)
     (X, y_original, y), (train_indices, val_indices, test_indices), label_mapping = dataset.get_data()
 
     n_select_max_power = int(np.floor(np.log2(X.shape[1])))
     n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
-
+    
     result_combined = []
     for feature_select_method in select_methods:
         # for power in range(n_select_start_power, n_select_max_power + 2):
         #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-        for n_select in [128, 1024, 8192, 131072]:
+        for n_select in [8192, 131072]:
 
             current_loop = {"randon_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
             logging.info(f"*************** current loop: {current_loop} ***************")
 
             try:
-                X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select, train_idx = train_indices) 
+                X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select, train_idx = train_indices, val_idx = val_indices) 
             except Exception as e:
                 logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
                 continue 
@@ -430,7 +510,8 @@ def main():
             #     except Exception as e:
             #         logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
 
-            # X_selected_flatten = X_selected.reshape(X_selected.shape[0], -1) #flatten last feature dims
+            if len(X_selected.shape) == 3: # boolean encoding of SNP status
+                X_selected = X_selected.reshape(X_selected.shape[0], -1) #flatten last feature dims
             X_train, X_val, X_test = X_selected[train_indices], X_selected[val_indices], X_selected[test_indices]
             y_train, y_val, y_test = y[train_indices], y[val_indices], y[test_indices]
             
@@ -443,10 +524,10 @@ def main():
                     if (n_dim_reduced < n_select):
                         current_loop["n_dim_reduced"] = n_dim_reduced
                         try:
-                            X_train_reduced, X_val_reduced, X_test_reduced = PCA_transform(X_train, X_val, X_test, n = n_dim_reduced)
+                            X_train_reduced, X_val_reduced, X_test_reduced = feature_transform(X_train, X_val, X_test, n = n_dim_reduced)
                             logging.info(f" - Selected {n_dim_reduced} features using PCA: X_train_reduced.shape = {X_train_reduced.shape}")
                         except Exception as e:
-                            logging.error(f"An unexpected error occurred while PCA_transform of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                            logging.error(f"An unexpected error occurred while feature_transform of {current_loop}. {e.__class__.__name__}: {str(e)}")
                             continue
                     else:
                         continue
