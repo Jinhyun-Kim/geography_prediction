@@ -39,10 +39,10 @@ log_file_handler.setLevel(logging.INFO)  # Set the logging level for the file
 log_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(log_file_handler)
 
-# log_console_handler = logging.StreamHandler()
-# log_console_handler.setLevel(logging.INFO)
-# log_console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-# logger.addHandler(log_console_handler)
+log_console_handler = logging.StreamHandler()
+log_console_handler.setLevel(logging.INFO)
+log_console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(log_console_handler)
 
 RANDOM_SEED = 42
 RANDOM_SEED_DATASET = 42
@@ -147,10 +147,18 @@ def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
                               random_state = RANDOM_SEED)
         
         eval_set = [(X_train, y_train), (X_val, y_val)]
-        model.fit(X_train, y_train, early_stopping_rounds=10, eval_metric="mlogloss", eval_set=eval_set, verbose=True)
-        y_pred_train = model.predict(X_train, ntree_limit=model.best_ntree_limit)
-        y_pred_val = model.predict(X_val, ntree_limit=model.best_ntree_limit)
-        y_pred_test = model.predict(X_test, ntree_limit=model.best_ntree_limit)
+        model.fit(X_train, y_train, early_stopping_rounds=10, eval_set=eval_set, verbose=True)
+        
+        # if hasattr(model, 'best_iteration'): # this is not necessary for sklearn interface
+        #     # print(f"XGB best iteration: {model.best_iteration}")
+        #     y_pred_train = model.predict(X_train, iteration_range=(0, model.best_iteration+1))
+        #     y_pred_val = model.predict(X_val, iteration_range=(0, model.best_iteration+1))
+        #     y_pred_test = model.predict(X_test, iteration_range=(0, model.best_iteration+1))
+        # else:
+        y_pred_train = model.predict(X_train)
+        y_pred_val = model.predict(X_val)
+        y_pred_test = model.predict(X_test)
+
         return (y_pred_train, y_pred_val, y_pred_test, model.get_params())
 
     elif method == "DT":
@@ -458,17 +466,17 @@ def main():
                 ],
         "RF": [
             {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
-            {'n_estimators': 1000}, # previous overfit
+            {'n_estimators': 1000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
             {'n_estimators': 100, 'max_features': 'log2', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
             {'n_estimators': 100, 'max_features': 'log2', 'max_depth': None, 'min_samples_split': 10, 'min_samples_leaf': 10},
             {'n_estimators': 100, 'max_features': 'log2', 'max_depth': 10, 'min_samples_split': 10, 'min_samples_leaf': 10},
         ],
 
         "XGB": [
-            {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
-            {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.01, 'n_estimators': 100, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            # {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
             {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
             {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
         ]
@@ -525,7 +533,7 @@ def main():
                         current_loop["n_dim_reduced"] = n_dim_reduced
                         try:
                             X_train_reduced, X_val_reduced, X_test_reduced = feature_transform(X_train, X_val, X_test, n = n_dim_reduced)
-                            logging.info(f" - Selected {n_dim_reduced} features using PCA: X_train_reduced.shape = {X_train_reduced.shape}")
+                            logging.info(f" - Reduced to {n_dim_reduced} features using PCA: X_train_reduced.shape = {X_train_reduced.shape}")
                         except Exception as e:
                             logging.error(f"An unexpected error occurred while feature_transform of {current_loop}. {e.__class__.__name__}: {str(e)}")
                             continue
