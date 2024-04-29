@@ -7,12 +7,11 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import seaborn as sns
 
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit
 from sklearn.feature_selection import SelectKBest, chi2, f_classif, mutual_info_classif, SequentialFeatureSelector
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, precision_recall_fscore_support #, roc_curve, roc_auc_score, recall_score, precision_score,
 from sklearn.preprocessing import LabelEncoder#, StandardScaler
-from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier #, ExtraTreesClassifier,GradientBoostingClassifier
@@ -52,6 +51,12 @@ class data_loader:
         super().__init__()
         
         self.target_label_name ='Population code'
+        self.notusing_lables = ['IBS,MSL', # only 1 sample
+                                'GBR', # accuracy 11%
+                                'ASW', 'ACB', # accuracy ~ 60%
+                                'GIH', # acuracy < 80%
+                                'CHB', 'STU', 'ITU',  # accuracy < 90%
+                                ]
 
         self.X = np.load(X_path)
 
@@ -59,7 +64,7 @@ class data_loader:
         self.y = self.sample_annotation_df[self.target_label_name]
         logging.info(f"[progress] Read data done. X.shape: {self.X.shape}, y.shape: {self.y.shape}")
 
-        self.drop_notusing_sample()
+        self.drop_notusing_sample(notusing_list= self.notusing_lables)
         self.y_encoded, self.label_mapping = self.encode_y()
         self.train_indices, self.val_indices, self.test_indices = self.split_dataset(val_size=0.2, test_size=0.2)
 
@@ -88,8 +93,8 @@ class data_loader:
             print(f"Extra indices: {extra_indices}")
             return False
 
-    def drop_notusing_sample(self):
-        indices_to_drop = self.sample_annotation_df[self.sample_annotation_df[self.target_label_name] == 'IBS,MSL'].index
+    def drop_notusing_sample(self, notusing_list):
+        indices_to_drop = self.sample_annotation_df[self.sample_annotation_df[self.target_label_name].isin(notusing_list)].index
 
         if not indices_to_drop.empty:
             self.sample_annotation_df = self.sample_annotation_df.drop(indices_to_drop)
@@ -132,12 +137,26 @@ class data_loader:
 
         return df
         
+
 @measure_performance
 def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
     if method == "SVM":
-        model = SVC(**params, random_state = RANDOM_SEED)
+        # model = SVC(**params, random_state = RANDOM_SEED)
+
+        model = SVC(random_state=RANDOM_SEED)
+        grid_search = GridSearchCV(estimator=model, param_grid = params, cv=5, scoring='accuracy', verbose=1)
+        grid_search.fit(X_train, y_train)  # Fits the model on the training data
+        model = grid_search.best_estimator_
+
+        y_pred_train = model.predict(X_train)
+        y_pred_val = model.predict(X_val)
+        y_pred_test = model.predict(X_test)
+
+        return (y_pred_train, y_pred_val, y_pred_test, model.get_params())
+
     elif method == "LinearSVM":
         model = LinearSVC(penalty='l1', dual= "auto", **params, random_state=RANDOM_SEED)
+
     elif method == "XGB":
         model = XGBClassifier(**params, 
                               objective='multi:softmax',  # Use softmax for multi-class classification
@@ -429,40 +448,42 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["random"]#["random", "xgb", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["random", "variance", "chi2", "f_classif"]#["random", "xgb", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
 
     n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["XGB"] #["SVM", "XGB", "RF", "DT", "KNN"]
+    ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
     hyper_params = {
-        "SVM": [{'C': 0.1, 'kernel': 'linear'},    # previous best params
-                {'C': 0.0001, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.0002, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.0004, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.0006, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.0008, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.001, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.002, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.004, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.008, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.01, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 0.1, 'kernel': 'linear'},  # Linear kernel with low regularization
-                {'C': 1, 'kernel': 'linear'},   # Linear kernel with more regularization
-                {'C': 10, 'kernel': 'linear'},   # Higher regularization
-                # {'C': 0.001, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 0.01, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 0.2, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 0.4, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 0.6, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 0.8, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
-                # {'C': 1, 'kernel': 'rbf', 'gamma': 'auto'},       # RBF kernel, automatic gamma
-                # {'C': 10, 'kernel': 'rbf', 'gamma': 0.01},        # RBF with specific low gamma
-                # {'C': 50, 'kernel': 'rbf', 'gamma': 0.1},         # RBF with higher C and moderate gamma
-                # {'C': 100, 'kernel': 'rbf', 'gamma': 1},          # RBF with high C and gamma
-                # {'C': 0.5, 'kernel': 'sigmoid', 'gamma': 'auto'}, # Sigmoid kernel, low C
-                # {'C': 2, 'kernel': 'sigmoid', 'gamma': 'scale'}   # Sigmoid kernel with scaled gamma
+        "SVM": [
+                {'C': [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10], 'kernel': ['linear']}  # grid search params
+                # {'C': 0.1, 'kernel': 'linear'},    # previous best params
+                # {'C': 0.0001, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.0002, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.0004, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.0006, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.0008, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.001, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.002, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.004, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.008, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.01, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 0.1, 'kernel': 'linear'},  # Linear kernel with low regularization
+                # {'C': 1, 'kernel': 'linear'},   # Linear kernel with more regularization
+                # {'C': 10, 'kernel': 'linear'},   # Higher regularization
+                # # {'C': 0.001, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 0.01, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 0.2, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 0.4, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 0.6, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 0.8, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
+                # # {'C': 1, 'kernel': 'rbf', 'gamma': 'auto'},       # RBF kernel, automatic gamma
+                # # {'C': 10, 'kernel': 'rbf', 'gamma': 0.01},        # RBF with specific low gamma
+                # # {'C': 50, 'kernel': 'rbf', 'gamma': 0.1},         # RBF with higher C and moderate gamma
+                # # {'C': 100, 'kernel': 'rbf', 'gamma': 1},          # RBF with high C and gamma
+                # # {'C': 0.5, 'kernel': 'sigmoid', 'gamma': 'auto'}, # Sigmoid kernel, low C
+                # # {'C': 2, 'kernel': 'sigmoid', 'gamma': 'scale'}   # Sigmoid kernel with scaled gamma
                 ],
         "RF": [
             {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
@@ -497,7 +518,7 @@ def main():
     for feature_select_method in select_methods:
         # for power in range(n_select_start_power, n_select_max_power + 2):
         #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-        for n_select in [8192, 131072, 5105448]:
+        for n_select in [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, ]: #5105448
 
             current_loop = {"randon_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
