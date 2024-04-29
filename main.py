@@ -477,8 +477,9 @@ def main():
             {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
             {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
             {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
+            # {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
         ]
     }
 
@@ -496,7 +497,7 @@ def main():
     for feature_select_method in select_methods:
         # for power in range(n_select_start_power, n_select_max_power + 2):
         #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-        for n_select in [8192, 131072]:
+        for n_select in [8192, 131072, 5105448]:
 
             current_loop = {"randon_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
