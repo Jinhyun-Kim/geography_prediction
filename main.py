@@ -57,6 +57,7 @@ class data_loader:
                                 'GIH', # acuracy < 80%
                                 'CHB', 'STU', 'ITU',  # accuracy < 90%
                                 ]
+        data_split = [0.6, 0.2, 0.2] #train, val, test
 
         self.X = np.load(X_path)
 
@@ -66,7 +67,7 @@ class data_loader:
 
         self.drop_notusing_sample(notusing_list= self.notusing_lables)
         self.y_encoded, self.label_mapping = self.encode_y()
-        self.train_indices, self.val_indices, self.test_indices = self.split_dataset(val_size=0.2, test_size=0.2)
+        self.train_indices, self.val_indices, self.test_indices = self.split_dataset(val_size = data_split[1], test_size = data_split[2])
 
         logging.info(f" - Data_split: train_set (n= {len(self.train_indices)}), val_set (n= {len(self.val_indices)}), test_set (n= {len(self.test_indices)})")
 
@@ -244,27 +245,21 @@ def select_feature(X, y, method, n, train_idx, val_idx):
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
-        raise NotImplemented # not validated
+        params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
 
-        xgb_model = XGBClassifier(
-            n_estimators=1000,  # Start with a large number and rely on early stopping. default 100
-            learning_rate=0.1, # default 0.1
-            gamma=0.1,  # Adjust gamma, might require tuning. default 0
-            subsample=0.8,  # Subsample ratio of the training instance. default 1
-            colsample_bytree=0.8,  # Subsample ratio of columns when constructing each tree. default 1
-            objective='multi:softmax',  # Use softmax for multi-class classification
-            num_class=len(np.unique(y)),  # Number of classes
-            use_label_encoder=False,
-            eval_metric='mlogloss',  # Metric used for multiclass classification
-            random_state=RANDOM_SEED
-        )
 
-        xgb_model.fit(
-            X_train, y_train,
-            eval_set=[(X_val, y_val)],
-            early_stopping_rounds=50,  # Stop if the validation metric does not improve in 50 rounds
-            verbose=False  # Set to True if you want to see the progress
-        )
+        xgb_model = XGBClassifier(**params, 
+                              objective='multi:softmax',  # Use softmax for multi-class classification
+                              num_class=len(np.unique(y)),  # Number of classes
+                              use_label_encoder=False,
+                              eval_metric='mlogloss',  # Metric used for multiclass classification
+                              random_state = RANDOM_SEED)
+        
+        eval_set = [(X_train, y_train), (X_val, y_val)]
+        xgb_model.fit(X_train, y_train, 
+                      early_stopping_rounds=10, 
+                      eval_set=eval_set, 
+                      verbose=True)
         
         # Get feature importances and select the top 'n' features
         fi = xgb_model.feature_importances_
@@ -440,8 +435,10 @@ def get_data_path(save_data_path):
 
 def main():
     ### arguments -----
-    target_feature = "merged_support3_variance_0.1" # Real_data
+    # target_feature = "merged_support3_variance_0.1" # Real_data
+    target_feature = "merged_support3_variance_0.1_random_1M"
     # target_feature = "merged_random_1k" # Test_data
+
     target_feature_suffix = "_matrix.npy"
     # target_feature_suffix = "_matrix_onehot.npy"
 
@@ -520,7 +517,7 @@ def main():
         #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
         for n_select in [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, ]: #5105448
 
-            current_loop = {"randon_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
+            current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
             logging.info(f"*************** current loop: {current_loop} ***************")
 
