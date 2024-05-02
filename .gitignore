@@ -1,5 +1,6 @@
 # personal ignores
 results/
+obsolete/
 logs.txt
 
 # Byte-compiled / optimized / DLL files

@@ -234,56 +234,58 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
         'f1_macro': f1_macro,
         'f1_weighted': f1_weighted,
         'confusion_matrix': conf_matrix,
-        # **class_metrics
+        **class_metrics
     }
 
     return metrics
 
+global_feature_importances = None
+
 @measure_performance
 def select_feature(X, y, method, n, train_idx, val_idx): 
+    global global_feature_importances
     if method == "xgb":
-        X_train, X_val = X[train_idx], X[val_idx]
-        y_train, y_val = y[train_idx], y[val_idx]
+        if global_feature_importances is None:
+            X_train, X_val = X[train_idx], X[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
 
-        params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
+            params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5}
 
 
-        xgb_model = XGBClassifier(**params, 
-                              objective='multi:softmax',  # Use softmax for multi-class classification
-                              num_class=len(np.unique(y)),  # Number of classes
-                              use_label_encoder=False,
-                              eval_metric='mlogloss',  # Metric used for multiclass classification
-                              random_state = RANDOM_SEED)
+            xgb_model = XGBClassifier(**params, 
+                                objective='multi:softmax',  # Use softmax for multi-class classification
+                                num_class=len(np.unique(y)),  # Number of classes
+                                use_label_encoder=False,
+                                eval_metric='mlogloss',  # Metric used for multiclass classification
+                                random_state = RANDOM_SEED)
+            
+            eval_set = [(X_train, y_train), (X_val, y_val)]
+            xgb_model.fit(X_train, y_train, 
+                        early_stopping_rounds=10, 
+                        eval_set=eval_set, 
+                        verbose=True)
+            
+            global_feature_importances = xgb_model.feature_importances_
         
-        eval_set = [(X_train, y_train), (X_val, y_val)]
-        xgb_model.fit(X_train, y_train, 
-                      early_stopping_rounds=10, 
-                      eval_set=eval_set, 
-                      verbose=True)
-        
-        # Get feature importances and select the top 'n' features
-        fi = xgb_model.feature_importances_
-        fi_series = pd.Series(fi)
-        print(fi_series)
+        fi_series = pd.Series(global_feature_importances)
         selected_indices = fi_series.nlargest(n).index
-        X_selected = X[:, selected_indices]
-        print(X_selected.shape)
 
-        validation_score = xgb_model.best_score
-        print(validation_score)
-        pass
+        X_selected = X[:, selected_indices]
 
     elif method == "rf":
         if len(X.shape) >= 3:
             raise NotImplemented
-        X_train = X[train_idx]
-        y_train = y[train_idx]
+        if global_feature_importances is None:
+            X_train = X[train_idx]
+            y_train = y[train_idx]
 
-        clf = RandomForestClassifier(n_estimators=1000, random_state = RANDOM_SEED)
-        clf.fit(X_train, y_train)
+            params = {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
+            clf = RandomForestClassifier(**params, random_state = RANDOM_SEED)
+            clf.fit(X_train, y_train)
 
-        fi = clf.feature_importances_
-        fi_series = pd.Series(fi)
+            global_feature_importances = clf.feature_importances_
+
+        fi_series = pd.Series(global_feature_importances)
         selected_indices = fi_series.nlargest(n).index
         
         X_selected = X[:, selected_indices]
@@ -367,7 +369,7 @@ def feature_transform(X_train, X_val, X_test, n, method='PCA'):
     return X_train_transformed, X_val_transformed, X_test_transformed
 
 def draw_PCA(X, y, file_name):
-    pca = PCA(n_components=2)
+    pca = PCA(n_components=2, random_state = RANDOM_SEED)
     pca_result = pca.fit_transform(X)
 
     plt.figure(figsize=(8, 8))
@@ -445,11 +447,12 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["random", "variance", "chi2", "f_classif"]#["random", "xgb", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["random"]#["random", "xgb", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
 
     n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
+    ML_models = ["XGB"] #["SVM", "XGB", "RF", "DT", "KNN"]
+
     hyper_params = {
         "SVM": [
                 {'C': [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10], 'kernel': ['linear']}  # grid search params
@@ -484,20 +487,23 @@ def main():
                 ],
         "RF": [
             {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
-            {'n_estimators': 1000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
-            {'n_estimators': 100, 'max_features': 'log2', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
-            {'n_estimators': 100, 'max_features': 'log2', 'max_depth': None, 'min_samples_split': 10, 'min_samples_leaf': 10},
-            {'n_estimators': 100, 'max_features': 'log2', 'max_depth': 10, 'min_samples_split': 10, 'min_samples_leaf': 10},
+            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
+            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': 3, 'min_samples_split': 2, 'min_samples_leaf': 1},
+            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': 3, 'min_samples_split': 8, 'min_samples_leaf': 8},
+            {'n_estimators': 500, 'max_features': 'log2', 'max_depth': 3, 'min_samples_split': 8, 'min_samples_leaf': 8},
         ],
 
         "XGB": [
             # {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
             {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
+            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
+            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
             {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
-            # {'learning_rate': 0.01, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 10, 'reg_alpha': 5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 8, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 8, "subsample": 0.6, "colsample_bytree": 0.6, 'reg_lambda': 2, 'reg_alpha': 5},
         ]
     }
 
@@ -515,7 +521,8 @@ def main():
     for feature_select_method in select_methods:
         # for power in range(n_select_start_power, n_select_max_power + 2):
         #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-        for n_select in [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, ]: #5105448
+        # for n_select in [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, ]: #5105448
+        for n_select in [1048576]: #5105448
 
             current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
 
