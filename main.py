@@ -15,6 +15,7 @@ from sklearn.preprocessing import LabelEncoder#, StandardScaler
 from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier #, ExtraTreesClassifier,GradientBoostingClassifier
+from sklearn.inspection import permutation_importance
 
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.manifold import TSNE
@@ -239,56 +240,84 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
 
     return metrics
 
-global_feature_importances = None
 
 @measure_performance
 def select_feature(X, y, method, n, train_idx, val_idx): 
-    global global_feature_importances
+    X_train, X_val = X[train_idx], X[val_idx]
+    y_train, y_val = y[train_idx], y[val_idx]
+
     if method == "xgb":
-        if global_feature_importances is None:
-            X_train, X_val = X[train_idx], X[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
 
-            params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5}
+        params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5}
 
 
-            xgb_model = XGBClassifier(**params, 
-                                objective='multi:softmax',  # Use softmax for multi-class classification
-                                num_class=len(np.unique(y)),  # Number of classes
-                                use_label_encoder=False,
-                                eval_metric='mlogloss',  # Metric used for multiclass classification
-                                random_state = RANDOM_SEED)
-            
-            eval_set = [(X_train, y_train), (X_val, y_val)]
-            xgb_model.fit(X_train, y_train, 
-                        early_stopping_rounds=10, 
-                        eval_set=eval_set, 
-                        verbose=True)
-            
-            global_feature_importances = xgb_model.feature_importances_
+        model = XGBClassifier(**params, 
+                            objective='multi:softmax',  # Use softmax for multi-class classification
+                            num_class=len(np.unique(y)),  # Number of classes
+                            use_label_encoder=False,
+                            eval_metric='mlogloss',  # Metric used for multiclass classification
+                            random_state = RANDOM_SEED)
         
-        fi_series = pd.Series(global_feature_importances)
-        selected_indices = fi_series.nlargest(n).index
+        eval_set = [(X_train, y_train), (X_val, y_val)]
+        model.fit(X_train, y_train, 
+                    early_stopping_rounds=10, 
+                    eval_set=eval_set, 
+                    verbose=True)
+        
+        # basic tree based feature importance
+        feature_importances_impurity = model.feature_importances_
 
-        X_selected = X[:, selected_indices]
+        # permutation feature importance
+        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
+        perm_feature_importances = perm_importance_results.importances_mean
+
+        feature_importance_use = perm_feature_importances # feature_importances_impurity
+
+        X_selected_list = []
+        for num in n:
+            selected_indices = np.argsort(feature_importance_use)[-num:][::-1]
+            X_selected = X[:, selected_indices]
+            X_selected_list.append(X_selected)
+
 
     elif method == "rf":
         if len(X.shape) >= 3:
             raise NotImplemented
-        if global_feature_importances is None:
-            X_train = X[train_idx]
-            y_train = y[train_idx]
 
-            params = {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
-            clf = RandomForestClassifier(**params, random_state = RANDOM_SEED)
-            clf.fit(X_train, y_train)
+        params = {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
+        model = RandomForestClassifier(**params, random_state = RANDOM_SEED)
+        model.fit(X_train, y_train)
 
-            global_feature_importances = clf.feature_importances_
+        # basic tree based feature importance
+        feature_importances_impurity = model.feature_importances_
 
-        fi_series = pd.Series(global_feature_importances)
-        selected_indices = fi_series.nlargest(n).index
-        
-        X_selected = X[:, selected_indices]
+        # permutation feature importance
+        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
+        perm_feature_importances = perm_importance_results.importances_mean
+
+        feature_importance_use = perm_feature_importances # feature_importances_impurity
+
+        X_selected_list = []
+        for num in n:
+            selected_indices = np.argsort(feature_importance_use)[-num:][::-1]
+            X_selected = X[:, selected_indices]
+            X_selected_list.append(X_selected)
+
+    elif method == "svm":
+        params = {'C': 0.1, 'kernel': 'linear'}
+        model = SVC(**params, random_state=RANDOM_SEED)
+        model.fit(X_train, y_train)
+
+        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
+        perm_feature_importances = perm_importance_results.importances_mean
+
+        feature_importance_use = perm_feature_importances
+
+        X_selected_list = []
+        for num in n:
+            selected_indices = np.argsort(feature_importance_use)[-num:][::-1]
+            X_selected = X[:, selected_indices]
+            X_selected_list.append(X_selected)
 
     else:
         num_snps_before = X.shape[1]
@@ -348,7 +377,8 @@ def select_feature(X, y, method, n, train_idx, val_idx):
         else:
             raise ValueError(f"Unsupported method: {method}")
 
-    return(X_selected)
+    return(X_selected_list)
+
 
 def feature_transform(X_train, X_val, X_test, n, method='PCA'):
     if method == 'PCA':
@@ -447,11 +477,18 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["random"]#["random", "xgb", "rf", "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["rf"]#["random", "xgb", "rf", "svm" "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    
+    # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
+    # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
+    # for power in range(n_select_start_power, n_select_max_power + 2):
+    # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
+    # n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    n_select_list = [256, 512] #5105448
 
     n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["XGB"] #["SVM", "XGB", "RF", "DT", "KNN"]
+    ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
 
     hyper_params = {
         "SVM": [
@@ -514,25 +551,22 @@ def main():
                           sample_annotation_file)
     (X, y_original, y), (train_indices, val_indices, test_indices), label_mapping = dataset.get_data()
 
-    n_select_max_power = int(np.floor(np.log2(X.shape[1])))
-    n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     
     result_combined = []
     for feature_select_method in select_methods:
-        # for power in range(n_select_start_power, n_select_max_power + 2):
-        #     n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-        # for n_select in [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, ]: #5105448
-        for n_select in [1048576]: #5105448
 
-            current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method, "select_n": n_select}
+        current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method}
 
-            logging.info(f"*************** current loop: {current_loop} ***************")
+        logging.info(f"*************** current loop: {current_loop} ***************")
 
-            try:
-                X_selected, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select, train_idx = train_indices, val_idx = val_indices) 
-            except Exception as e:
-                logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
-                continue 
+        try:
+            X_selected_list, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select_list, train_idx = train_indices, val_idx = val_indices) 
+        except Exception as e:
+            logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
+            continue 
+
+        for X_selected, n_select in zip(X_selected_list, n_select_list):
+            current_loop["select_n"] = n_select
 
             logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
 
