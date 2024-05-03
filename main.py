@@ -270,8 +270,11 @@ def select_feature(X, y, method, n, train_idx, val_idx):
         # permutation feature importance
         perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
         perm_feature_importances = perm_importance_results.importances_mean
+        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_mean.npy", perm_feature_importances)
+        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
 
-        feature_importance_use = perm_feature_importances # feature_importances_impurity
+        # feature_importance_use = feature_importances_impurity 
+        feature_importance_use = perm_feature_importances
 
         X_selected_list = []
         for num in n:
@@ -294,6 +297,8 @@ def select_feature(X, y, method, n, train_idx, val_idx):
         # permutation feature importance
         perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
         perm_feature_importances = perm_importance_results.importances_mean
+        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_mean.npy", perm_feature_importances)
+        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
 
         feature_importance_use = perm_feature_importances # feature_importances_impurity
 
@@ -307,9 +312,12 @@ def select_feature(X, y, method, n, train_idx, val_idx):
         params = {'C': 0.1, 'kernel': 'linear'}
         model = SVC(**params, random_state=RANDOM_SEED)
         model.fit(X_train, y_train)
+        logging.info(" - SVM train done for permutation feature importance")
 
-        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
+        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=5, n_jobs = 3, random_state=RANDOM_SEED)
         perm_feature_importances = perm_importance_results.importances_mean
+        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_mean.npy", perm_feature_importances)
+        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
 
         feature_importance_use = perm_feature_importances
 
@@ -477,14 +485,14 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["rf"]#["random", "xgb", "rf", "svm" "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["svm"]#["random", "xgb", "rf", "svm" "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
     
     # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    # n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
-    n_select_list = [256, 512] #5105448
+    n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    # n_select_list = [1048576] #5105448
 
     n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
