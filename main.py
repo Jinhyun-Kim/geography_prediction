@@ -457,6 +457,8 @@ def get_data_path(save_data_path):
     data_locations = {
         '223.195.111.48': '/project/datacamp/team11/data',
         '147.47.44.229': '/home/jinhyun/data/1kGP',
+        '147.47.44.93': '/home/jinhyun/data/1kGP',
+
     }
 
     raw_data_path = data_locations.get(get_ip_address(), '/not_found')
