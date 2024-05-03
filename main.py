@@ -242,9 +242,10 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
 
 
 @measure_performance
-def select_feature(X, y, method, n, train_idx, val_idx): 
+def select_feature(X, y, method, n_list, train_idx, val_idx): 
     X_train, X_val = X[train_idx], X[val_idx]
     y_train, y_val = y[train_idx], y[val_idx]
+    X_selected_list = []
 
     if method == "xgb":
 
@@ -276,9 +277,8 @@ def select_feature(X, y, method, n, train_idx, val_idx):
         # feature_importance_use = feature_importances_impurity 
         feature_importance_use = perm_feature_importances
 
-        X_selected_list = []
-        for num in n:
-            selected_indices = np.argsort(feature_importance_use)[-num:][::-1]
+        for n in n_list:
+            selected_indices = np.argsort(feature_importance_use)[-n:][::-1]
             X_selected = X[:, selected_indices]
             X_selected_list.append(X_selected)
 
@@ -302,9 +302,8 @@ def select_feature(X, y, method, n, train_idx, val_idx):
 
         feature_importance_use = perm_feature_importances # feature_importances_impurity
 
-        X_selected_list = []
-        for num in n:
-            selected_indices = np.argsort(feature_importance_use)[-num:][::-1]
+        for n in n_list:
+            selected_indices = np.argsort(feature_importance_use)[-n:][::-1]
             X_selected = X[:, selected_indices]
             X_selected_list.append(X_selected)
 
@@ -321,69 +320,70 @@ def select_feature(X, y, method, n, train_idx, val_idx):
 
         feature_importance_use = perm_feature_importances
 
-        X_selected_list = []
-        for num in n:
-            selected_indices = np.argsort(feature_importance_use)[-num:][::-1]
+        for n in n_list:
+            selected_indices = np.argsort(feature_importance_use)[-n:][::-1]
             X_selected = X[:, selected_indices]
             X_selected_list.append(X_selected)
 
     else:
         num_snps_before = X.shape[1]
+        for n in n_list:
+            if method in ["random", "variance"]:
+                if method == "random":
+                    rng = np.random.default_rng(seed = RANDOM_SEED)
+                    boolean_mask = np.zeros(num_snps_before, dtype=bool)
+                    selected_indices = rng.choice(num_snps_before, n, replace=False)
+                    boolean_mask[selected_indices] = True
 
-        if method in ["random", "variance"]:
-            if method == "random":
-                rng = np.random.default_rng(seed = RANDOM_SEED)
-                boolean_mask = np.zeros(num_snps_before, dtype=bool)
-                selected_indices = rng.choice(num_snps_before, n, replace=False)
-                boolean_mask[selected_indices] = True
+                elif method == "variance":
+                    batch_process = False
 
-            elif method == "variance":
-                batch_process = False
+                    if batch_process:
+                        raise NotImplemented
+                        batch_size=100000
+                        n_samples, n_snps = X.shape
+                        variances = np.zeros((n_snps, feature_dim))
+                    
+                        for start in tqdm(range(0, n_snps, batch_size)):
+                            end = min(start + batch_size, n_snps)
+                            batch_var = np.var(genotype_array_onehot[:, start:end, :], axis=0)
+                            variances[start:end, :] = batch_var
+                    else:
+                        variances = np.var(X, axis=0)
+                    
+                    selected_indices = np.argsort(variances)[-n:]
+                    boolean_mask = np.zeros(num_snps_before, dtype=bool)
+                    boolean_mask[selected_indices] = True
 
-                if batch_process:
-                    raise NotImplemented
-                    batch_size=100000
-                    n_samples, n_snps = X.shape
-                    variances = np.zeros((n_snps, feature_dim))
+                X_selected = X[:, boolean_mask]
+                num_snps_after = X_selected.shape[1]
+
+                assert boolean_mask.sum() == num_snps_after
+
                 
-                    for start in tqdm(range(0, n_snps, batch_size)):
-                        end = min(start + batch_size, n_snps)
-                        batch_var = np.var(genotype_array_onehot[:, start:end, :], axis=0)
-                        variances[start:end, :] = batch_var
+            elif method in ["chi2", "f_classif", "mutual_info_classif"]:
+                if method == "chi2":
+                    score_fun = chi2
+                elif method == "f_classif":
+                    score_fun = f_classif
+                elif method == "mutual_info_classif":
+                    score_fun = mutual_info_classif
                 else:
-                    variances = np.var(X, axis=0)
-                
-                selected_indices = np.argsort(variances)[-n:]
-                boolean_mask = np.zeros(num_snps_before, dtype=bool)
-                boolean_mask[selected_indices] = True
+                    raise
 
-            X_selected = X[:, boolean_mask]
-            num_snps_after = X_selected.shape[1]
+                X_selected = SelectKBest(score_fun, k = n).fit_transform(X, y)
 
-            assert boolean_mask.sum() == num_snps_after
+            elif method == "recursive_feature_selection":
+                knn = KNeighborsClassifier(n_neighbors = n)
+                sfs = SequentialFeatureSelector(knn, n_features_to_select = n)
+                sfs.fit(X, y)
 
-            
-        elif method in ["chi2", "f_classif", "mutual_info_classif"]:
-            if method == "chi2":
-                score_fun = chi2
-            elif method == "f_classif":
-                score_fun = f_classif
-            elif method == "mutual_info_classif":
-                score_fun = mutual_info_classif
+                #sfs.get_support()
+                X_selected = sfs.transform(X)
             else:
-                raise
-
-            X_selected = SelectKBest(score_fun, k = n).fit_transform(X, y)
-
-        elif method == "recursive_feature_selection":
-            knn = KNeighborsClassifier(n_neighbors = n)
-            sfs = SequentialFeatureSelector(knn, n_features_to_select = n)
-            sfs.fit(X, y)
-
-            #sfs.get_support()
-            X_selected = sfs.transform(X)
-        else:
-            raise ValueError(f"Unsupported method: {method}")
+                raise ValueError(f"Unsupported method: {method}")
+            
+            X_selected_list.append(X_selected)
 
     return(X_selected_list)
 
@@ -487,18 +487,18 @@ def main():
     save_data_path = "./results"
 
     n_select_start = 128
-    select_methods = ["svm"]#["random", "xgb", "rf", "svm" "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["random"]#["random", "xgb", "rf", "svm" "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
     
     # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
-    # n_select_list = [1048576] #5105448
+    # n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    n_select_list = [1048576] #5105448
 
     n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
+    ML_models = ["XGB"] #["SVM", "XGB", "RF", "DT", "KNN"]
 
     hyper_params = {
         "SVM": [
@@ -542,15 +542,15 @@ def main():
 
         "XGB": [
             # {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
+            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
             # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
             # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
             # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 10, 'reg_alpha': 5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 8, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 8, "subsample": 0.6, "colsample_bytree": 0.6, 'reg_lambda': 2, 'reg_alpha': 5},
+            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 10, 'reg_alpha': 5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 8, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 8, "subsample": 0.6, "colsample_bytree": 0.6, 'reg_lambda': 2, 'reg_alpha': 5},
         ]
     }
 
@@ -570,7 +570,7 @@ def main():
         logging.info(f"*************** current loop: {current_loop} ***************")
 
         try:
-            X_selected_list, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n = n_select_list, train_idx = train_indices, val_idx = val_indices) 
+            X_selected_list, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n_list = n_select_list, train_idx = train_indices, val_idx = val_indices) 
         except Exception as e:
             logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
             continue 
