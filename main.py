@@ -16,6 +16,7 @@ from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier #, ExtraTreesClassifier,GradientBoostingClassifier
 from sklearn.inspection import permutation_importance
+from sklearn.utils.class_weight import compute_class_weight
 
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.manifold import TSNE
@@ -139,11 +140,15 @@ class data_loader:
 
         return df
         
-
 @measure_performance
 def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
     if method == "SVM":
         # model = SVC(**params, random_state = RANDOM_SEED)
+
+        # classes = np.unique(y_train)
+        # class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
+        # class_weight_dict = dict(zip(classes, class_weights))
+        # params = {**params, 'class_weight': [class_weight_dict]}
 
         model = SVC(random_state=RANDOM_SEED)
         grid_search = GridSearchCV(estimator=model, param_grid = params, cv=5, scoring='accuracy', verbose=1)
@@ -242,40 +247,47 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
 
 
 @measure_performance
-def select_feature(X, y, method, n_list, train_idx, val_idx): 
+def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix = None, from_cache = False): 
     X_train, X_val = X[train_idx], X[val_idx]
     y_train, y_val = y[train_idx], y[val_idx]
     X_selected_list = []
 
     if method == "xgb":
+        # params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5} # inital trial
+        params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, 'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1, 'reg_alpha': 0} # current best
 
-        params = {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5}
+        if not (from_cache and os.path.exists(f"{cache_file_prefix}_basic_feature_importance_mean.npy")):
+            model = XGBClassifier(**params, 
+                                objective='multi:softmax',  # Use softmax for multi-class classification
+                                num_class=len(np.unique(y)),  # Number of classes
+                                use_label_encoder=False,
+                                eval_metric='mlogloss',  # Metric used for multiclass classification
+                                random_state = RANDOM_SEED)
+            
+            eval_set = [(X_train, y_train), (X_val, y_val)]
+            model.fit(X_train, y_train, 
+                        early_stopping_rounds=10, 
+                        eval_set=eval_set, 
+                        verbose=True)
+            logging.info(f" - {method} model train done for feature selection")
 
+            # basic tree based feature importance
+            feature_importances_impurity = model.feature_importances_
+            if cache_file_prefix is not None:
+                np.save(f"{cache_file_prefix}_basic_feature_importance_mean.npy", feature_importances_impurity)
+            
+            # permutation feature importance
+            # perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=5, n_jobs = 3, random_state=RANDOM_SEED)
+            # perm_feature_importances = perm_importance_results.importances_mean
+            # if cache_file_prefix is not None:
+            #     np.save(f"{cache_file_prefix}_perm_feature_importance_mean.npy", perm_feature_importances)
+            #     np.save(f"{cache_file_prefix}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
+        else:
+            feature_importances_impurity = np.load(f"{cache_file_prefix}_basic_feature_importance_mean.npy")
+            # perm_feature_importances = np.load(f"{cache_file_prefix}_perm_feature_importance_mean.npy")
 
-        model = XGBClassifier(**params, 
-                            objective='multi:softmax',  # Use softmax for multi-class classification
-                            num_class=len(np.unique(y)),  # Number of classes
-                            use_label_encoder=False,
-                            eval_metric='mlogloss',  # Metric used for multiclass classification
-                            random_state = RANDOM_SEED)
-        
-        eval_set = [(X_train, y_train), (X_val, y_val)]
-        model.fit(X_train, y_train, 
-                    early_stopping_rounds=10, 
-                    eval_set=eval_set, 
-                    verbose=True)
-        
-        # basic tree based feature importance
-        feature_importances_impurity = model.feature_importances_
-
-        # permutation feature importance
-        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
-        perm_feature_importances = perm_importance_results.importances_mean
-        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_mean.npy", perm_feature_importances)
-        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
-
-        # feature_importance_use = feature_importances_impurity 
-        feature_importance_use = perm_feature_importances
+        feature_importance_use = feature_importances_impurity 
+        # feature_importance_use = perm_feature_importances
 
         for n in n_list:
             selected_indices = np.argsort(feature_importance_use)[-n:][::-1]
@@ -287,20 +299,30 @@ def select_feature(X, y, method, n_list, train_idx, val_idx):
         if len(X.shape) >= 3:
             raise NotImplemented
 
-        params = {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
-        model = RandomForestClassifier(**params, random_state = RANDOM_SEED)
-        model.fit(X_train, y_train)
+        params = {'n_estimators': 2000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
+        
+        if not (from_cache and os.path.exists(f"{cache_file_prefix}_basic_feature_importance_mean.npy")):
+            model = RandomForestClassifier(**params, random_state = RANDOM_SEED)
+            model.fit(X_train, y_train)
+            logging.info(f" - {method} model train done for feature selection")
 
-        # basic tree based feature importance
-        feature_importances_impurity = model.feature_importances_
+            # basic tree based feature importance
+            feature_importances_impurity = model.feature_importances_
+            if cache_file_prefix is not None:
+                np.save(f"{cache_file_prefix}_basic_feature_importance_mean.npy", feature_importances_impurity)
 
-        # permutation feature importance
-        perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=10, random_state=RANDOM_SEED)
-        perm_feature_importances = perm_importance_results.importances_mean
-        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_mean.npy", perm_feature_importances)
-        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
+            # permutation feature importance
+            # perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=5, n_jobs = 3, random_state=RANDOM_SEED)
+            # perm_feature_importances = perm_importance_results.importances_mean
+            # if cache_file_prefix is not None:
+            #     np.save(f"{cache_file_prefix}_perm_feature_importance_mean.npy", perm_feature_importances)
+            #     np.save(f"{cache_file_prefix}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
+        else:
+            feature_importances_impurity = np.load(f"{cache_file_prefix}_basic_feature_importance_mean.npy")
+            # perm_feature_importances = np.load(f"{cache_file_prefix}_perm_feature_importance_mean.npy")
 
-        feature_importance_use = perm_feature_importances # feature_importances_impurity
+        feature_importance_use = feature_importances_impurity 
+        # feature_importance_use = perm_feature_importances
 
         for n in n_list:
             selected_indices = np.argsort(feature_importance_use)[-n:][::-1]
@@ -311,12 +333,13 @@ def select_feature(X, y, method, n_list, train_idx, val_idx):
         params = {'C': 0.1, 'kernel': 'linear'}
         model = SVC(**params, random_state=RANDOM_SEED)
         model.fit(X_train, y_train)
-        logging.info(" - SVM train done for permutation feature importance")
+        logging.info(f" - {method} model train done for feature selection")
 
         perm_importance_results = permutation_importance(model, X_val, y_val, n_repeats=5, n_jobs = 3, random_state=RANDOM_SEED)
         perm_feature_importances = perm_importance_results.importances_mean
-        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_mean.npy", perm_feature_importances)
-        np.save(f"{X.shape[1]}_{method}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
+        if cache_file_prefix is not None:
+            np.save(f"{cache_file_prefix}_perm_feature_importance_mean.npy", perm_feature_importances)
+            np.save(f"{cache_file_prefix}_perm_feature_importance_std.npy", perm_importance_results.importances_std)
 
         feature_importance_use = perm_feature_importances
 
@@ -390,7 +413,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx):
 
 def feature_transform(X_train, X_val, X_test, n, method='PCA'):
     if method == 'PCA':
-        transformer = PCA(n_components=n)
+        transformer = PCA(n_components=n, random_state = RANDOM_SEED)
     elif method == 'KernelPCA':
         transformer = KernelPCA(n_components=n, kernel='rbf')  # kernel can be changed based on requirement
     # elif method == 'UMAP':
@@ -452,6 +475,15 @@ def draw_tSNE(X, y, file_name):
     plt.savefig(f"{file_name}_tSNE.pdf", dpi = 300)
     plt.show()  # Optionally show the plot
 
+def select_label(y, y_original, target_label):
+    target_label_encoded = np.unique(y[y_original == target_label])[0]
+    y_binary = (y == target_label_encoded).astype(int)
+    y_original_binary = np.where(y_original == target_label, "target", 'others')
+
+    label_mapping = {0 : "others", 1: "target"}
+    
+    return y_binary, y_original_binary, label_mapping
+
 
 def get_data_path(save_data_path):
     data_locations = {
@@ -479,6 +511,7 @@ def main():
     ### arguments -----
     # target_feature = "merged_support3_variance_0.1" # Real_data
     target_feature = "merged_support3_variance_0.1_random_1M"
+    # target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
     # target_feature = "merged_random_1k" # Test_data
 
     target_feature_suffix = "_matrix.npy"
@@ -486,37 +519,25 @@ def main():
 
     save_data_path = "./results"
 
-    n_select_start = 128
-    select_methods = ["random"]#["random", "xgb", "rf", "svm" "variance", "chi2", "f_classif", "mutual_info_classif"] # Extra-trees
+    select_methods = ["rf"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
+    select_feature_from_cache = True
     
+    # n_select_start = 128
     # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    # n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
-    n_select_list = [1048576] #5105448
+    n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+    # n_select_list = [1048576] #5105448
 
-    n_dim_reduce_list = [128, 1024, None]  ## list should always contain None to perform whole feature training after selection
+    n_dim_reduce_list = [128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["XGB"] #["SVM", "XGB", "RF", "DT", "KNN"]
+    ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
 
     hyper_params = {
         "SVM": [
                 {'C': [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10], 'kernel': ['linear']}  # grid search params
-                # {'C': 0.1, 'kernel': 'linear'},    # previous best params
-                # {'C': 0.0001, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.0002, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.0004, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.0006, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.0008, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.001, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.002, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.004, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.008, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.01, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 0.1, 'kernel': 'linear'},  # Linear kernel with low regularization
-                # {'C': 1, 'kernel': 'linear'},   # Linear kernel with more regularization
-                # {'C': 10, 'kernel': 'linear'},   # Higher regularization
                 # # {'C': 0.001, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
                 # # {'C': 0.01, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
                 # # {'C': 0.1, 'kernel': 'rbf', 'gamma': 'scale'},    # RBF kernel with low regularization
@@ -533,24 +554,14 @@ def main():
                 # # {'C': 2, 'kernel': 'sigmoid', 'gamma': 'scale'}   # Sigmoid kernel with scaled gamma
                 ],
         "RF": [
-            {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
-            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1},
-            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': 3, 'min_samples_split': 2, 'min_samples_leaf': 1},
-            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': 3, 'min_samples_split': 8, 'min_samples_leaf': 8},
-            {'n_estimators': 500, 'max_features': 'log2', 'max_depth': 3, 'min_samples_split': 8, 'min_samples_leaf': 8},
+            # {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
+            {'n_estimators': 2000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # current best for 1048576 features
+            # {'n_estimators': 4000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # current best for 1048576 features
         ],
 
         "XGB": [
-            # {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
-            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
-            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 1, "colsample_bytree": 1, 'reg_lambda': 1, 'reg_alpha': 0},
-            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 1, 'reg_alpha': 0},
-            # {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 2, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 0.5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 1, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 10, 'reg_alpha': 5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 8, "subsample": 0.8, "colsample_bytree": 0.8, 'reg_lambda': 2, 'reg_alpha': 5},
-            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 8, "subsample": 0.6, "colsample_bytree": 0.6, 'reg_lambda': 2, 'reg_alpha': 5},
+            # {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, 'subsample': 1, 'colsample_bytree': 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
+            {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, 'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1, 'reg_alpha': 0}, # current best for 1048576 features
         ]
     }
 
@@ -561,16 +572,26 @@ def main():
                           sample_annotation_file)
     (X, y_original, y), (train_indices, val_indices, test_indices), label_mapping = dataset.get_data()
 
+
     
     result_combined = []
-    for feature_select_method in select_methods:
 
+    for feature_select_method in select_methods:
         current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method}
+        feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}"
+
+    # y_backup, y_original_backup = y, y_original
+    # feature_select_method = "xgb"
+    # for class_target in ['BEB', 'CDX', 'CEU', 'CHS', 'CLM', 'ESN', 'FIN', 'GWD', 'IBS', 'JPT', 'KHV', 'LWK', 'MSL', 'MXL', 'PEL', 'PJL', 'PUR', 'TSI', 'YRI']:
+    #     y, y_original, label_mapping = select_label(y_backup, y_original_backup, target_label = class_target)
+    #     current_loop = {"random_seed": RANDOM_SEED, "class_target": class_target}
+    #     feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}_cls_{class_target}"
+
 
         logging.info(f"*************** current loop: {current_loop} ***************")
 
         try:
-            X_selected_list, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n_list = n_select_list, train_idx = train_indices, val_idx = val_indices) 
+            X_selected_list, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n_list = n_select_list, train_idx = train_indices, val_idx = val_indices, cache_file_prefix = feature_importance_cache_file_prefix, from_cache = select_feature_from_cache) 
         except Exception as e:
             logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
             continue 
