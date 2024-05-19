@@ -299,7 +299,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
         if len(X.shape) >= 3:
             raise NotImplemented
 
-        params = {'n_estimators': 2000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
+        params = {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}
         
         if not (from_cache and os.path.exists(f"{cache_file_prefix}_basic_feature_importance_mean.npy")):
             model = RandomForestClassifier(**params, random_state = RANDOM_SEED)
@@ -519,7 +519,7 @@ def main():
 
     save_data_path = "./results"
 
-    select_methods = ["rf"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
+    select_methods = ["random"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = True
     
     # n_select_start = 128
@@ -527,11 +527,11 @@ def main():
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    n_select_list = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     # n_select_list = [1048576] #5105448
 
-    n_dim_reduce_list = [128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
+    n_dim_reduce_list = [None]#[128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
     ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
 
@@ -555,8 +555,7 @@ def main():
                 ],
         "RF": [
             # {'n_estimators': 100, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # default
-            {'n_estimators': 2000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # current best for 1048576 features
-            # {'n_estimators': 4000, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # current best for 1048576 features
+            {'n_estimators': 500, 'max_features': 'sqrt', 'max_depth': None, 'min_samples_split': 2, 'min_samples_leaf': 1}, # current best for 1048576 features
         ],
 
         "XGB": [
