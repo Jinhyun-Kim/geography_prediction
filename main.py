@@ -1,13 +1,15 @@
-import os, time
+import os, time, random
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
+import multiprocessing
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import seaborn as sns
 
-from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit
+from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit, cross_val_score
 from sklearn.feature_selection import SelectKBest, chi2, f_classif, mutual_info_classif, SequentialFeatureSelector
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, precision_recall_fscore_support #, roc_curve, roc_auc_score, recall_score, precision_score,
@@ -21,6 +23,8 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.manifold import TSNE
 # from umap import UMAP
+
+from deap import base, creator, tools, algorithms
 
 from xgboost import XGBClassifier
 
@@ -245,6 +249,41 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
 
     return metrics
 
+def evaluate_individual(individual, X_train, y_train, X_val, y_val):
+    selected_features = [i for i in individual]
+    X_train_selected = X_train[:, selected_features]
+    X_val_selected = X_val[:, selected_features]
+    
+    model = SVC(C=0.1, kernel='linear', random_state=RANDOM_SEED)
+    scores = cross_val_score(model, X_train_selected, y_train, cv=5, scoring='accuracy')
+    accuracy = scores.mean()
+    
+    return accuracy,
+
+def cx_unique(ind1, ind2):
+    size = min(len(ind1), len(ind2))
+    cxpoint = random.randint(1, size - 1)
+    
+    temp1 = ind1[:cxpoint] + [x for x in reversed(ind2) if x not in ind1[:cxpoint]]
+    temp2 = ind2[:cxpoint] + [x for x in reversed(ind1) if x not in ind2[:cxpoint]]
+    
+    ind1[:] = temp1[:len(ind1)]
+    ind2[:] = temp2[:len(ind2)]
+
+    assert(len(np.unique(ind1)) == len(ind1))
+    assert(len(np.unique(ind2)) == len(ind2))
+    
+    return ind1, ind2
+
+def mut_unique(individual, low, up, indpb):
+    for i in range(len(individual)):
+        if random.random() < indpb:
+            new_val = random.randint(low, up)
+            while new_val in individual:
+                new_val = random.randint(low, up)
+            individual[i] = new_val
+    assert len(np.unique(individual)) == len(individual)
+    return individual,
 
 @measure_performance
 def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix = None, from_cache = False): 
@@ -346,6 +385,69 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
         for n in n_list:
             selected_indices = np.argsort(feature_importance_use)[-n:][::-1]
             X_selected = X[:, selected_indices]
+            X_selected_list.append(X_selected)
+
+    elif method == "ga":
+        for n in n_list:
+            pop_size = 500
+            num_generation = 100
+            crossover_prob = 0.5
+            mutation_prob = 0.2
+            mutation_prob_ind = 0.1
+
+            num_features = X.shape[1]
+
+            creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+            creator.create("Individual", list, fitness=creator.FitnessMax)
+
+            toolbox = base.Toolbox()
+            toolbox.register("indices", random.sample, range(num_features), n)
+            toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.indices)
+            toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+            toolbox.register("evaluate", evaluate_individual, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val)
+            toolbox.register("mate", cx_unique)
+            toolbox.register("mutate", mut_unique, low=0, up=num_features-1, indpb=mutation_prob_ind)
+            toolbox.register("select", tools.selTournament, tournsize=3)
+
+            # Parallel processing setup
+            pool = multiprocessing.Pool()
+            toolbox.register("map", pool.map)
+
+            population = toolbox.population(n = pop_size)
+            
+            # Add stats and hall of fame
+            stats = tools.Statistics(lambda ind: ind.fitness.values)
+            stats.register("avg", np.mean)
+            stats.register("std", np.std)
+            stats.register("min", np.min)
+            stats.register("max", np.max)
+            
+            hof = tools.HallOfFame(1)
+
+            fits = toolbox.map(toolbox.evaluate, population)
+            for fit, ind in zip(fits, population):
+                ind.fitness.values = fit
+            hof.update(population)
+            
+            for gen in range(num_generation):
+                offspring = algorithms.varAnd(population, toolbox, cxpb=crossover_prob, mutpb=mutation_prob)
+                offspring = list(map(toolbox.clone, offspring))
+                fits = toolbox.map(toolbox.evaluate, offspring)
+                
+                for fit, ind in zip(fits, offspring):
+                    ind.fitness.values = fit
+                
+                population = toolbox.select(population + offspring, k=pop_size) # natural selection
+                hof.update(population)
+                
+                record = stats.compile(population)
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"{timestamp} - Generation {gen}: Avg={record['avg']:.4f}, Min={record['min']:.4f}, Max={record['max']:.4f}")
+            
+            
+            best_ind = hof[0]
+            selected_features = [i for i in best_ind]
+            X_selected = X[:, selected_features]
             X_selected_list.append(X_selected)
 
     else:
@@ -510,8 +612,9 @@ def get_data_path(save_data_path):
 def main():
     ### arguments -----
     # target_feature = "merged_support3_variance_0.1" # Real_data
-    target_feature = "merged_support3_variance_0.1_random_1M"
-    # target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
+    # target_feature = "merged_support3_variance_0.1_random_1M"
+    # target_feature = "merged_support3_variance_0.1_random_100k"
+    target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
     # target_feature = "merged_random_1k" # Test_data
 
     target_feature_suffix = "_matrix.npy"
@@ -519,7 +622,7 @@ def main():
 
     save_data_path = "./results"
 
-    select_methods = ["random"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
+    select_methods = ["ga", "xgb", "random"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = True
     
     # n_select_start = 128
@@ -527,7 +630,7 @@ def main():
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    n_select_list = [256]#[128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     # n_select_list = [1048576] #5105448
 
