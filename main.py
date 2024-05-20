@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import seaborn as sns
 
-from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit, cross_val_score
+from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit, StratifiedKFold
 from sklearn.feature_selection import SelectKBest, chi2, f_classif, mutual_info_classif, SequentialFeatureSelector
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, precision_recall_fscore_support #, roc_curve, roc_auc_score, recall_score, precision_score,
@@ -250,16 +250,27 @@ def evaluate_performance(y_test, y_pred, label_mapping, save_file_previx):
     return metrics
 
 def evaluate_individual(individual, X_train, y_train, X_val, y_val):
+    X_train_val = np.concatenate((X_train, X_val), axis=0)
+    y_train_val = np.concatenate((y_train, y_val), axis=0)
+
+
     selected_features = [i for i in individual]
-    X_train_selected = X_train[:, selected_features]
-    X_val_selected = X_val[:, selected_features]
+    X_selected = X_train_val[:, selected_features]
 
-    model = SVC(C=0.1, kernel='linear') #, random_state=RANDOM_SEED
-    model.fit(X_train_selected, y_train)
-    y_pred_val = model.predict(X_val_selected)
-    accuracy = accuracy_score(y_val, y_pred_val)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state = RANDOM_SEED)
+    accuracy_scores = []
+    for train_index, val_index in skf.split(X_selected, y_train_val):
+        X_train_fold, X_val_fold = X_selected[train_index], X_selected[val_index]
+        y_train_fold, y_val_fold = y_train_val[train_index], y_train_val[val_index]
 
-    return accuracy,
+        model = SVC(C=0.1, kernel='linear') #, random_state=RANDOM_SEED
+        model.fit(X_train_fold, y_train_fold)
+        y_pred_fold = model.predict(X_val_fold)
+        accuracy = accuracy_score(y_val_fold, y_pred_fold)
+        accuracy_scores.append(accuracy)
+
+    avg_accuracy = np.mean(accuracy_scores)
+    return avg_accuracy,
 
 def cx_unique(ind1, ind2):
     size = min(len(ind1), len(ind2))
