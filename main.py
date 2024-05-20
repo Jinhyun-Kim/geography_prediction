@@ -253,11 +253,12 @@ def evaluate_individual(individual, X_train, y_train, X_val, y_val):
     selected_features = [i for i in individual]
     X_train_selected = X_train[:, selected_features]
     X_val_selected = X_val[:, selected_features]
-    
-    model = SVC(C=0.1, kernel='linear', random_state=RANDOM_SEED)
-    scores = cross_val_score(model, X_train_selected, y_train, cv=5, scoring='accuracy')
-    accuracy = scores.mean()
-    
+
+    model = SVC(C=0.1, kernel='linear') #, random_state=RANDOM_SEED
+    model.fit(X_train_selected, y_train)
+    y_pred_val = model.predict(X_val_selected)
+    accuracy = accuracy_score(y_val, y_pred_val)
+
     return accuracy,
 
 def cx_unique(ind1, ind2):
@@ -393,7 +394,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
             num_generation = 100
             crossover_prob = 0.5
             mutation_prob = 0.2
-            mutation_prob_ind = 0.1
+            mutation_prob_ind = 0.05
 
             num_features = X.shape[1]
 
@@ -443,7 +444,6 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                 record = stats.compile(population)
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 print(f"{timestamp} - Generation {gen}: Avg={record['avg']:.4f}, Min={record['min']:.4f}, Max={record['max']:.4f}")
-            
             
             best_ind = hof[0]
             selected_features = [i for i in best_ind]
