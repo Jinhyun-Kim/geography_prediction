@@ -154,16 +154,15 @@ def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
         # class_weight_dict = dict(zip(classes, class_weights))
         # params = {**params, 'class_weight': [class_weight_dict]}
 
-        model = SVC(random_state=RANDOM_SEED)
-        grid_search = GridSearchCV(estimator=model, param_grid = params, cv=5, scoring='accuracy', verbose=1)
+        base_model = SVC(random_state=RANDOM_SEED)
+        grid_search = GridSearchCV(estimator=base_model, param_grid = params, cv=5, scoring='accuracy', verbose=1, refit=True)
         grid_search.fit(X_train, y_train)  # Fits the model on the training data
-        model = grid_search.best_estimator_
 
-        y_pred_train = model.predict(X_train)
-        y_pred_val = model.predict(X_val)
-        y_pred_test = model.predict(X_test)
+        y_pred_train = grid_search.predict(X_train)
+        y_pred_val = grid_search.predict(X_val)
+        y_pred_test = grid_search.predict(X_test)
 
-        return (y_pred_train, y_pred_val, y_pred_test, model.get_params())
+        return (y_pred_train, y_pred_val, y_pred_test, grid_search.best_params_)
 
     elif method == "LinearSVM":
         model = LinearSVC(penalty='l1', dual= "auto", **params, random_state=RANDOM_SEED)
@@ -257,7 +256,7 @@ def evaluate_individual(individual, X_train, y_train, X_val, y_val):
     selected_features = [i for i in individual]
     X_selected = X_train_val[:, selected_features]
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state = RANDOM_SEED)
+    skf = StratifiedKFold(n_splits=5, shuffle=True) #, random_state = RANDOM_SEED
     accuracy_scores = []
     for train_index, val_index in skf.split(X_selected, y_train_val):
         X_train_fold, X_val_fold = X_selected[train_index], X_selected[val_index]
@@ -434,28 +433,48 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
             stats.register("min", np.min)
             stats.register("max", np.max)
             
-            hof = tools.HallOfFame(1)
+            hof = tools.HallOfFame(3)
 
-            fits = toolbox.map(toolbox.evaluate, population)
-            for fit, ind in zip(fits, population):
-                ind.fitness.values = fit
-            hof.update(population)
+            no_improvement_count = 0
+            best_fitness = 0
             
             for gen in range(num_generation):
+                # # Dynamic parameter adjustments
+                # if gen > 0 and gen % 10 == 0:
+                #     mutation_prob *= 0.9  # Decrease mutation probability over generations
+
+                fits = toolbox.map(toolbox.evaluate, population)
+                for fit, ind in zip(fits, population):
+                    ind.fitness.values = fit
+                # hof.update(population)
+        
                 offspring = algorithms.varAnd(population, toolbox, cxpb=crossover_prob, mutpb=mutation_prob)
                 offspring = list(map(toolbox.clone, offspring))
-                fits = toolbox.map(toolbox.evaluate, offspring)
                 
+                fits = toolbox.map(toolbox.evaluate, offspring)
                 for fit, ind in zip(fits, offspring):
                     ind.fitness.values = fit
                 
-                population = toolbox.select(population + offspring, k=pop_size) # natural selection
-                hof.update(population)
+                # population[:] = toolbox.select(population + offspring, k=pop_size - len(hof)) + list(hof.items)  # natural selection with Elitism
+                population = toolbox.select(population + offspring, k=pop_size)
+                # hof.update(population)
                 
                 record = stats.compile(population)
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 print(f"{timestamp} - Generation {gen}: Avg={record['avg']:.4f}, Min={record['min']:.4f}, Max={record['max']:.4f}")
+
+                # Early stopping if no improvement in maximum fitness
+                if record['max'] > best_fitness:
+                    best_fitness = record['max']
+                    no_improvement_count = 0
+                else:
+                    no_improvement_count += 1
+
+                if no_improvement_count >= 10:  # Stop if no improvement in 10 generations
+                    print(f"Early stopping at generation {gen} due to no improvement")
+                    break
             
+            hof.update(population)
             best_ind = hof[0]
             selected_features = [i for i in best_ind]
             X_selected = X[:, selected_features]
