@@ -443,7 +443,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
             
             for gen in range(num_generation):
                 offspring = algorithms.varAnd(population, toolbox, cxpb=crossover_prob, mutpb=mutation_prob)
-                offspring = list(map(toolbox.clone, offspring))
+                # offspring = list(map(toolbox.clone, offspring))
                 fits = toolbox.map(toolbox.evaluate, offspring)
                 
                 for fit, ind in zip(fits, offspring):
@@ -624,8 +624,8 @@ def main():
     ### arguments -----
     # target_feature = "merged_support3_variance_0.1" # Real_data
     # target_feature = "merged_support3_variance_0.1_random_1M"
-    # target_feature = "merged_support3_variance_0.1_random_100k"
-    target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
+    target_feature = "merged_support3_variance_0.1_random_100k"
+    # target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
     # target_feature = "merged_random_1k" # Test_data
 
     target_feature_suffix = "_matrix.npy"
