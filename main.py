@@ -565,19 +565,28 @@ def draw_PCA(X, y, file_name):
     pca = PCA(n_components=2, random_state = RANDOM_SEED)
     pca_result = pca.fit_transform(X)
 
-    plt.figure(figsize=(8, 8))
+    plt.figure(figsize=(6, 6))
+
+    # Get distinct colors from tab20 and tab10 colormaps
+    colors = list(plt.get_cmap('tab20').colors) + list(plt.get_cmap('Dark2').colors) + list(plt.get_cmap('Set1').colors) + list(plt.get_cmap('Set2').colors) + list(plt.get_cmap('Set3').colors)
+    if len(np.unique(y)) > len(colors):
+        raise ValueError("Not enough distinct colors available for the number of classes.")
+
+    color_map = {label: colors[i] for i, label in enumerate(np.unique(y))}
 
     for label in np.unique(y):
         indices = np.where(y == label)
-        plt.scatter(pca_result[indices, 0], pca_result[indices, 1], label=label, alpha=0.5)
+        plt.scatter(pca_result[indices, 0], pca_result[indices, 1], label=label, 
+                    color=color_map[label], 
+                    alpha=0.5)
+    
     plt.title(f'PCA of {X.shape[1]} SNPs')
     plt.xlabel('PC1')
     plt.ylabel('PC2')
-    #plt.legend(loc='best', prop={'size': 10})
-    plt.legend(loc=1, prop={'size': 5})
+    plt.legend(loc='best', prop={'size': 5})
 
-    plt.savefig(f"{file_name}_PCA.pdf", dpi = 300)
-    plt.show()  # Optionally show the plot
+    plt.savefig(f"{file_name}_PCA.pdf", dpi=300)
+    plt.show()
 
 def draw_tSNE(X, y, file_name):
     tsne = TSNE(n_components=2, verbose=1)
@@ -642,9 +651,9 @@ def get_data_path(save_data_path):
 def main():
     ### arguments -----
     # target_feature = "merged_support3_variance_0.1" # Real_data
-    # target_feature = "merged_support3_variance_0.1_random_1M"
+    target_feature = "merged_support3_variance_0.1_random_1M"
     # target_feature = "merged_support3_variance_0.1_random_100k"
-    target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
+    # target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
     # target_feature = "merged_random_1k" # Test_data
 
     target_feature_suffix = "_matrix.npy"
@@ -652,7 +661,7 @@ def main():
 
     save_data_path = "./results"
 
-    select_methods = ["ga", "xgb", "random"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
+    select_methods = ["random"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = True
     
     # n_select_start = 128
@@ -660,7 +669,7 @@ def main():
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    n_select_list = [256]#[128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    n_select_list = [100, 1000, 10000, 100000]#[128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     # n_select_list = [1048576] #5105448
 
