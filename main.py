@@ -491,18 +491,17 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                     boolean_mask[selected_indices] = True
 
                 elif method == "variance":
-                    batch_process = False
+                    batch_process = num_snps_before > 1000000
 
                     if batch_process:
-                        raise NotImplemented
-                        batch_size=100000
+                        batch_size = 1000000
                         n_samples, n_snps = X.shape
-                        variances = np.zeros((n_snps, feature_dim))
-                    
+                        variances = np.zeros((n_snps, )) #np.zeros((n_snps, feature_dim))
+
                         for start in tqdm(range(0, n_snps, batch_size)):
                             end = min(start + batch_size, n_snps)
-                            batch_var = np.var(genotype_array_onehot[:, start:end, :], axis=0)
-                            variances[start:end, :] = batch_var
+                            batch_var = np.var(X[:, start:end], axis=0) # np.var(X[:, start:end, :], axis=0)
+                            variances[start:end] = batch_var #variances[start:end, :] = batch_var
                     else:
                         variances = np.var(X, axis=0)
                     
@@ -651,12 +650,6 @@ def get_data_path(save_data_path):
 
 def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
     ### arguments -----
-    # target_feature = "merged_support3_variance_0.1" # Real_data
-    # target_feature = "merged_support3_variance_0.1_random_2M"
-    # target_feature = "merged_support3_variance_0.1_random_100k"
-    # target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
-    # target_feature = "merged_random_1k" # Test_data
-
     logging.info(f"Start select_and_train function with args: {target_feature}, {save_result_file_name}")
 
     target_feature_suffix = "_matrix.npy"
@@ -664,8 +657,13 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
     save_data_path = "./results"
 
+    pre_selection_methods = ["variance", "random", "chi2", "f_classif"]
+    n_pre_select_list = [1000000]
+    n_pre_select_goal = 1000000
+
     select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
-    select_feature_from_cache = True
+    select_feature_from_cache = False
+    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] 
     
     # n_select_start = 128
     # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
@@ -673,7 +671,6 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
     # n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192]#
-    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     # n_select_list = [1048576] #5105448
 
@@ -721,121 +718,135 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
     
     result_combined = []
 
-    for feature_select_method in select_methods:
-        current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method}
-        feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}"
-
-    # y_backup, y_original_backup = y, y_original
-    # feature_select_method = "xgb"
-    # for class_target in ['BEB', 'CDX', 'CEU', 'CHS', 'CLM', 'ESN', 'FIN', 'GWD', 'IBS', 'JPT', 'KHV', 'LWK', 'MSL', 'MXL', 'PEL', 'PJL', 'PUR', 'TSI', 'YRI']:
-    #     y, y_original, label_mapping = select_label(y_backup, y_original_backup, target_label = class_target)
-    #     current_loop = {"random_seed": RANDOM_SEED, "class_target": class_target}
-    #     feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}_cls_{class_target}"
-
-
-        logging.info(f"*************** current loop: {current_loop} ***************")
-
+    for pre_feature_select_method in pre_selection_methods:
         try:
-            X_selected_list, perf_metric_select = select_feature(X = X, y = y, method = feature_select_method, n_list = n_select_list, train_idx = train_indices, val_idx = val_indices, cache_file_prefix = feature_importance_cache_file_prefix, from_cache = select_feature_from_cache) 
+            X_pre_selected_list, perf_metric_preselect = select_feature(X = X, y = y, method = pre_feature_select_method, n_list = n_pre_select_list, train_idx = train_indices, val_idx = val_indices) 
         except Exception as e:
-            logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
+            logging.error(f"An unexpected error occurred while pre_select_feature of {pre_feature_select_method}. {e.__class__.__name__}: {str(e)}")
             continue 
 
-        for X_selected, n_select in zip(X_selected_list, n_select_list):
-            current_loop["select_n"] = n_select
+        for X_pre_selected, n_pre_select in zip(X_pre_selected_list, n_pre_select_list):
+            if n_pre_select > n_pre_select_goal:
+                X_pre_selected_final_list, _ = select_feature(X = X_pre_selected, y = y, method = "random", n_list = [n_pre_select_goal], train_idx = train_indices, val_idx = val_indices) 
+                X_pre_selected_final = X_pre_selected_final_list[0]
+                logging.info(f" - Further selecting feature by random from {n_pre_select} to {n_pre_select_goal} variants. X_pre_selected.shape = {X_pre_selected.shape}. X_pre_selected.shape = {X_pre_selected_final.shape}")
+            else:
+                X_pre_selected_final = X_pre_selected
+            logging.info(f" - '{pre_feature_select_method}' feature selection selected {min(n_pre_select, n_pre_select_goal)} variants. X_pre_selected_final.shape = {X_pre_selected_final.shape}. perf_metrics_selection: {perf_metric_preselect}")
+        
+            for feature_select_method in select_methods:
+                current_loop = {"random_seed": RANDOM_SEED, "pre_select_method": pre_feature_select_method, "n_pre_select": n_pre_select, "n_pre_select_goal": n_pre_select_goal, "select_method": feature_select_method}
+                feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{pre_feature_select_method}_{n_pre_select}_{n_pre_select_goal}_{feature_select_method}"
 
-            logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
+            # y_backup, y_original_backup = y, y_original
+            # feature_select_method = "xgb"
+            # for class_target in ['BEB', 'CDX', 'CEU', 'CHS', 'CLM', 'ESN', 'FIN', 'GWD', 'IBS', 'JPT', 'KHV', 'LWK', 'MSL', 'MXL', 'PEL', 'PJL', 'PUR', 'TSI', 'YRI']:
+            #     y, y_original, label_mapping = select_label(y_backup, y_original_backup, target_label = class_target)
+            #     current_loop = {"random_seed": RANDOM_SEED, "class_target": class_target}
+            #     feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}_cls_{class_target}"
 
-            # if feature_select_method == "random":
-            #     try:
-            #         save_file_prefix = os.path.join(save_data_path, f"{feature_select_method}_{n_select}")
-            #         draw_PCA(X = X_selected, y = y_original, file_name=save_file_prefix)
-            #         # draw_tSNE(X = X_selected, y = y_original, file_name=save_file_prefix)
-            #     except Exception as e:
-            #         logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
 
-            if len(X_selected.shape) == 3: # boolean encoding of SNP status
-                X_selected = X_selected.reshape(X_selected.shape[0], -1) #flatten last feature dims
-            X_train, X_val, X_test = X_selected[train_indices], X_selected[val_indices], X_selected[test_indices]
-            y_train, y_val, y_test = y[train_indices], y[val_indices], y[test_indices]
-            
-            for n_dim_reduced in n_dim_reduce_list:
-                if (n_dim_reduced is None): # use whole feature
-                    current_loop["n_dim_reduced"] = n_select
-                    X_train_reduced, X_val_reduced, X_test_reduced = X_train, X_val, X_test 
-                    logging.info(f" - Using whole features for training: X_train.shape = {X_train_reduced.shape}")
-                else:
-                    if (n_dim_reduced < n_select):
-                        current_loop["n_dim_reduced"] = n_dim_reduced
-                        try:
-                            X_train_reduced, X_val_reduced, X_test_reduced = feature_transform(X_train, X_val, X_test, n = n_dim_reduced)
-                            logging.info(f" - Reduced to {n_dim_reduced} features using PCA: X_train_reduced.shape = {X_train_reduced.shape}")
-                        except Exception as e:
-                            logging.error(f"An unexpected error occurred while feature_transform of {current_loop}. {e.__class__.__name__}: {str(e)}")
-                            continue
-                    else:
-                        continue
+                logging.info(f"*************** current loop: {current_loop} ***************")
+
+                try:
+                    X_selected_list, perf_metric_select = select_feature(X = X_pre_selected_final, y = y, method = feature_select_method, n_list = n_select_list, train_idx = train_indices, val_idx = val_indices, cache_file_prefix = feature_importance_cache_file_prefix, from_cache = select_feature_from_cache) 
+                except Exception as e:
+                    logging.error(f"An unexpected error occurred while select_feature of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                    continue 
+
+                for X_selected, n_select in zip(X_selected_list, n_select_list):
+                    current_loop["select_n"] = n_select
+
+                    logging.info(f" - '{feature_select_method}' feature selection selected {n_select} variants. X_selected.shape = {X_selected.shape}. perf_metrics_selection: {perf_metric_select}")
+
+                    # if feature_select_method == "random":
+                    #     try:
+                    #         save_file_prefix = os.path.join(save_data_path, f"{feature_select_method}_{n_select}")
+                    #         draw_PCA(X = X_selected, y = y_original, file_name=save_file_prefix)
+                    #         # draw_tSNE(X = X_selected, y = y_original, file_name=save_file_prefix)
+                    #     except Exception as e:
+                    #         logging.error(f"An unexpected error occurred while draw_PCA or draw_tSNE of {current_loop}. {e.__class__.__name__}: {str(e)}")
+
+                    if len(X_selected.shape) == 3: # boolean encoding of SNP status
+                        X_selected = X_selected.reshape(X_selected.shape[0], -1) #flatten last feature dims
+                    X_train, X_val, X_test = X_selected[train_indices], X_selected[val_indices], X_selected[test_indices]
+                    y_train, y_val, y_test = y[train_indices], y[val_indices], y[test_indices]
                     
-            
-                for train_model in ML_models:
-                    for hyper_param_index, current_hyper_param in enumerate(hyper_params[train_model]):
-                        current_loop["train_model"] = train_model
+                    for n_dim_reduced in n_dim_reduce_list:
+                        if (n_dim_reduced is None): # use whole feature
+                            current_loop["n_dim_reduced"] = n_select
+                            X_train_reduced, X_val_reduced, X_test_reduced = X_train, X_val, X_test 
+                            logging.info(f" - Using whole features for training: X_train.shape = {X_train_reduced.shape}")
+                        else:
+                            if (n_dim_reduced < n_select):
+                                current_loop["n_dim_reduced"] = n_dim_reduced
+                                try:
+                                    X_train_reduced, X_val_reduced, X_test_reduced = feature_transform(X_train, X_val, X_test, n = n_dim_reduced)
+                                    logging.info(f" - Reduced to {n_dim_reduced} features using PCA: X_train_reduced.shape = {X_train_reduced.shape}")
+                                except Exception as e:
+                                    logging.error(f"An unexpected error occurred while feature_transform of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                                    continue
+                            else:
+                                continue
+                            
+                    
+                        for train_model in ML_models:
+                            for hyper_param_index, current_hyper_param in enumerate(hyper_params[train_model]):
+                                current_loop["train_model"] = train_model
 
-                        logging.info(f" - Start {train_model} training: X_train.shape = {X_train_reduced.shape} X_test.shape = {X_test_reduced.shape} with hyper_param {current_hyper_param}")
+                                logging.info(f" - Start {train_model} training: X_train.shape = {X_train_reduced.shape} X_test.shape = {X_test_reduced.shape} with hyper_param {current_hyper_param}")
 
-                        try:
-                            (y_pred_train, y_pred_val, y_pred_test, train_params), perf_metric_train = train_ML(method = train_model, 
-                                                                                X_train = X_train_reduced, y_train = y_train, 
-                                                                                X_val = X_val_reduced, y_val = y_val, 
-                                                                                X_test = X_test_reduced,
-                                                                                params = current_hyper_param) 
-                        except Exception as e:
-                            logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
-                            continue 
-                        eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_train"))
-                        eval_metrics_val = evaluate_performance(y_val, y_pred_val, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_val"))
-                        eval_metrics_test = evaluate_performance(y_test, y_pred_test, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_test"))
-                        logging.info(f' - Train done with Accuracy: {eval_metrics_test["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
+                                try:
+                                    (y_pred_train, y_pred_val, y_pred_test, train_params), perf_metric_train = train_ML(method = train_model, 
+                                                                                        X_train = X_train_reduced, y_train = y_train, 
+                                                                                        X_val = X_val_reduced, y_val = y_val, 
+                                                                                        X_test = X_test_reduced,
+                                                                                        params = current_hyper_param) 
+                                except Exception as e:
+                                    logging.error(f"An unexpected error occurred while train_ML of {current_loop}. {e.__class__.__name__}: {str(e)}")
+                                    continue 
+                                eval_metrics_train = evaluate_performance(y_train, y_pred_train, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_train"))
+                                eval_metrics_val = evaluate_performance(y_val, y_pred_val, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_val"))
+                                eval_metrics_test = evaluate_performance(y_test, y_pred_test, label_mapping, os.path.join(save_data_path, f"{feature_select_method}_{n_select}_{train_model}_{hyper_param_index}_test"))
+                                logging.info(f' - Train done with Accuracy: {eval_metrics_test["accuracy"]*100:.4f}%, perf_metrics_train: {perf_metric_train}')
 
 
-                        merged_metrics = {**current_loop,
-                                        "hyper_params" : str(current_hyper_param),
-                                        "model_params" : str(train_params),
-                                        **{f"select_{k}": v for k, v in perf_metric_select.items()},
-                                        **{f"train_{k}": v for k, v in perf_metric_train.items()},
-                                        **{f"testset_{k}": v for k, v in eval_metrics_test.items() if k != 'confusion_matrix'},
-                                        **{f"valset_{k}": v for k, v in eval_metrics_val.items() if k != 'confusion_matrix'},
-                                        **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
-                                        }
-                        result_combined.append(merged_metrics)
+                                merged_metrics = {**current_loop,
+                                                "hyper_params" : str(current_hyper_param),
+                                                "model_params" : str(train_params),
+                                                **{f"preselect_{k}": v for k, v in perf_metric_preselect.items()},
+                                                **{f"select_{k}": v for k, v in perf_metric_select.items()},
+                                                **{f"train_{k}": v for k, v in perf_metric_train.items()},
+                                                **{f"testset_{k}": v for k, v in eval_metrics_test.items() if k != 'confusion_matrix'},
+                                                **{f"valset_{k}": v for k, v in eval_metrics_val.items() if k != 'confusion_matrix'},
+                                                **{f"trainset_{k}": v for k, v in eval_metrics_train.items() if k != 'confusion_matrix'},
+                                                }
+                                result_combined.append(merged_metrics)
 
-                        ## update the dataframe
-                        results_df = pd.DataFrame(result_combined)
-                        results_df.to_excel(os.path.join(save_data_path, save_result_file_name), index = False)
+                                ## update the dataframe
+                                results_df = pd.DataFrame(result_combined)
+                                results_df.to_excel(os.path.join(save_data_path, save_result_file_name), index = False)
 
 def main():
-    prefix = "merged_support3" #"merged" #"merged_support3_variance_0.1"
-    feature_file_list =  [
-        # (f"{prefix}_random_10k_seed_{RANDOM_SEED}", f"10k_seed_{RANDOM_SEED}"),
-        # (f"{prefix}_random_50k_seed_{RANDOM_SEED}", f"50k_seed_{RANDOM_SEED}"),
-        # (f"{prefix}_random_100k_seed_{RANDOM_SEED}", f"100k_seed_{RANDOM_SEED}"),
-        # (f"{prefix}_random_500k_seed_{RANDOM_SEED}", f"500k_seed_{RANDOM_SEED}"),
-        (f"{prefix}_random_1M_seed_{RANDOM_SEED}", f"1M_seed_{RANDOM_SEED}"),
-        # (f"{prefix}_random_2M_seed_{RANDOM_SEED}", f"2M_seed_{RANDOM_SEED}"),
-        # (f"{prefix}_random_4M_seed_{RANDOM_SEED}", f"4M_seed_{RANDOM_SEED}"),
+    global RANDOM_SEED
+    input_feature_list =  [
+        "merged_support3",
     ]
+    seed_list = [42, 919, 1204, 624, 306]
 
-    # for feature_file, save_file_postfix in feature_file_list:
+    # for feature_file in input_feature_list:
     #     try:
     #         data = np.load(f"/home/jinhyun/data/1kGP/preprocessed/{feature_file}_matrix.npy")
-    #         print("data check:", feature_file, save_file_postfix, data.shape)
+    #         print("data check:", feature_file, data.shape)
     #     except:
     #         print("[warning] file not found: ", feature_file)
     # return
 
-    for feature_file, save_file_postfix in feature_file_list:
-        save_result_file_name = f"results_{save_file_postfix}.xlsx"
-        select_and_train(target_feature = feature_file, save_result_file_name = save_result_file_name)
+    for feature_file in input_feature_list:
+        for seed in seed_list:
+            RANDOM_SEED = seed
+            save_result_file_name = f"{feature_file}_seed_{RANDOM_SEED}_results.xlsx"
+            select_and_train(target_feature = feature_file, save_result_file_name = save_result_file_name)
 
 if __name__ == "__main__":
     main()
