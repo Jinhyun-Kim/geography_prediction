@@ -649,20 +649,22 @@ def get_data_path(save_data_path):
     return preprocess_path, sample_annotation_file
     
 
-def main():
+def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
     ### arguments -----
     # target_feature = "merged_support3_variance_0.1" # Real_data
-    target_feature = "merged_support3_variance_0.1_random_1M"
+    # target_feature = "merged_support3_variance_0.1_random_2M"
     # target_feature = "merged_support3_variance_0.1_random_100k"
     # target_feature = "merged_support3_variance_0.1_random_1M_xgb_8192"
     # target_feature = "merged_random_1k" # Test_data
+
+    logging.info(f"Start select_and_train function with args: {target_feature}, {save_result_file_name}")
 
     target_feature_suffix = "_matrix.npy"
     # target_feature_suffix = "_matrix_onehot.npy"
 
     save_data_path = "./results"
 
-    select_methods = ["random"]# ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
+    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = True
     
     # n_select_start = 128
@@ -670,11 +672,12 @@ def main():
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    n_select_list = [100, 1000, 10000, 100000]#[128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
+    # n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192]#
+    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] #5105448
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     # n_select_list = [1048576] #5105448
 
-    n_dim_reduce_list = [None]#[128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
+    n_dim_reduce_list = [128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
     ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
 
@@ -808,9 +811,31 @@ def main():
 
                         ## update the dataframe
                         results_df = pd.DataFrame(result_combined)
-                        results_df.to_excel(os.path.join(save_data_path, "results.xlsx"), index = False)
+                        results_df.to_excel(os.path.join(save_data_path, save_result_file_name), index = False)
 
+def main():
+    prefix = "merged_support3" #"merged" #"merged_support3_variance_0.1"
+    feature_file_list =  [
+        # (f"{prefix}_random_10k_seed_{RANDOM_SEED}", f"10k_seed_{RANDOM_SEED}"),
+        # (f"{prefix}_random_50k_seed_{RANDOM_SEED}", f"50k_seed_{RANDOM_SEED}"),
+        # (f"{prefix}_random_100k_seed_{RANDOM_SEED}", f"100k_seed_{RANDOM_SEED}"),
+        # (f"{prefix}_random_500k_seed_{RANDOM_SEED}", f"500k_seed_{RANDOM_SEED}"),
+        (f"{prefix}_random_1M_seed_{RANDOM_SEED}", f"1M_seed_{RANDOM_SEED}"),
+        # (f"{prefix}_random_2M_seed_{RANDOM_SEED}", f"2M_seed_{RANDOM_SEED}"),
+        # (f"{prefix}_random_4M_seed_{RANDOM_SEED}", f"4M_seed_{RANDOM_SEED}"),
+    ]
 
+    # for feature_file, save_file_postfix in feature_file_list:
+    #     try:
+    #         data = np.load(f"/home/jinhyun/data/1kGP/preprocessed/{feature_file}_matrix.npy")
+    #         print("data check:", feature_file, save_file_postfix, data.shape)
+    #     except:
+    #         print("[warning] file not found: ", feature_file)
+    # return
+
+    for feature_file, save_file_postfix in feature_file_list:
+        save_result_file_name = f"results_{save_file_postfix}.xlsx"
+        select_and_train(target_feature = feature_file, save_result_file_name = save_result_file_name)
 
 if __name__ == "__main__":
     main()
