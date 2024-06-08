@@ -491,7 +491,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                     boolean_mask[selected_indices] = True
 
                 elif method == "variance":
-                    batch_process = num_snps_before > 1000000
+                    batch_process = False #num_snps_before > 1000000
 
                     if batch_process:
                         batch_size = 1000000
@@ -727,7 +727,11 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
         for X_pre_selected, n_pre_select in zip(X_pre_selected_list, n_pre_select_list):
             if n_pre_select > n_pre_select_goal:
-                X_pre_selected_final_list, _ = select_feature(X = X_pre_selected, y = y, method = "random", n_list = [n_pre_select_goal], train_idx = train_indices, val_idx = val_indices) 
+                try:
+                    X_pre_selected_final_list, _ = select_feature(X = X_pre_selected, y = y, method = "random", n_list = [n_pre_select_goal], train_idx = train_indices, val_idx = val_indices) 
+                except Exception as e:
+                    logging.error(f"An unexpected error occurred while random selection after pre_select_feature. {e.__class__.__name__}: {str(e)}")
+                    continue 
                 X_pre_selected_final = X_pre_selected_final_list[0]
                 logging.info(f" - Further selecting feature by random from {n_pre_select} to {n_pre_select_goal} variants. X_pre_selected.shape = {X_pre_selected.shape}. X_pre_selected.shape = {X_pre_selected_final.shape}")
             else:
