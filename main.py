@@ -491,7 +491,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                     boolean_mask[selected_indices] = True
 
                 elif method == "variance":
-                    batch_process = False #num_snps_before > 1000000
+                    batch_process = num_snps_before > 1000000
 
                     if batch_process:
                         batch_size = 1000000
@@ -657,22 +657,23 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
     save_data_path = "./results"
 
-    pre_selection_methods = ["variance", "random", "chi2", "f_classif"]
-    n_pre_select_list = [1000000]
+    pre_selection_methods = ["variance", "random", ] #"chi2", "f_classif"
+    n_pre_select_list = [1000000] #[2000000, 4000000, 8000000, 16000000, 32000000]#
     n_pre_select_goal = 1000000
 
     select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = False
     n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] 
-    
+    # n_select_list = [100, 1000, 10000, 100000, 1000000] 
+    # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+    # n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192]#
+    # n_select_list = [1048576] #5105448
+
     # n_select_start = 128
     # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
     # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
     # for power in range(n_select_start_power, n_select_max_power + 2):
     # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
-    # n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192]#
-    # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-    # n_select_list = [1048576] #5105448
 
     n_dim_reduce_list = [128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
@@ -733,7 +734,7 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
                     logging.error(f"An unexpected error occurred while random selection after pre_select_feature. {e.__class__.__name__}: {str(e)}")
                     continue 
                 X_pre_selected_final = X_pre_selected_final_list[0]
-                logging.info(f" - Further selecting feature by random from {n_pre_select} to {n_pre_select_goal} variants. X_pre_selected.shape = {X_pre_selected.shape}. X_pre_selected.shape = {X_pre_selected_final.shape}")
+                logging.info(f" - Further selecting feature by random from {n_pre_select} to {n_pre_select_goal} variants. X_pre_selected.shape = {X_pre_selected.shape}. X_pre_selected_final.shape = {X_pre_selected_final.shape}")
             else:
                 X_pre_selected_final = X_pre_selected
             logging.info(f" - '{pre_feature_select_method}' feature selection selected {min(n_pre_select, n_pre_select_goal)} variants. X_pre_selected_final.shape = {X_pre_selected_final.shape}. perf_metrics_selection: {perf_metric_preselect}")
