@@ -504,7 +504,9 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                             variances[start:end] = batch_var #variances[start:end, :] = batch_var
                     else:
                         variances = np.var(X, axis=0)
-                    
+
+                    # np.save(f"{num_snps_before}_seed{RANDOM_SEED}_{method}.npy", variances)
+
                     selected_indices = np.argsort(variances)[-n:]
                     boolean_mask = np.zeros(num_snps_before, dtype=bool)
                     boolean_mask[selected_indices] = True
@@ -663,17 +665,9 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
     select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = False
-    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072] 
-    # n_select_list = [100, 1000, 10000, 100000, 1000000] 
-    # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-    # n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192]#
-    # n_select_list = [1048576] #5105448
-
-    # n_select_start = 128
-    # n_select_max_power = int(np.floor(np.log2(X.shape[1])))
-    # n_select_start_power = int(np.ceil(np.log2(n_select_start)))  
-    # for power in range(n_select_start_power, n_select_max_power + 2):
-    # n_select = 2**power if (power <= n_select_max_power) else X.shape[1]
+    n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+    # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192] # Mimimum SNPs
+    # n_select_list = [100, 1000, 10000, 100000, 1000000] # PCA
 
     n_dim_reduce_list = [128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
@@ -743,13 +737,15 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
                 current_loop = {"random_seed": RANDOM_SEED, "pre_select_method": pre_feature_select_method, "n_pre_select": n_pre_select, "n_pre_select_goal": n_pre_select_goal, "select_method": feature_select_method}
                 feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{pre_feature_select_method}_{n_pre_select}_{n_pre_select_goal}_{feature_select_method}"
 
-            # y_backup, y_original_backup = y, y_original
-            # feature_select_method = "xgb"
-            # for class_target in ['BEB', 'CDX', 'CEU', 'CHS', 'CLM', 'ESN', 'FIN', 'GWD', 'IBS', 'JPT', 'KHV', 'LWK', 'MSL', 'MXL', 'PEL', 'PJL', 'PUR', 'TSI', 'YRI']:
-            #     y, y_original, label_mapping = select_label(y_backup, y_original_backup, target_label = class_target)
-            #     current_loop = {"random_seed": RANDOM_SEED, "class_target": class_target}
-            #     feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}_cls_{class_target}"
-
+    # for _ in [1]:
+    #         perf_metric_preselect = {}
+    #         X_pre_selected_final = X
+    #         y_backup, y_original_backup = y, y_original
+    #         feature_select_method = "xgb"
+    #         for class_target in ['BEB', 'CDX', 'CEU', 'CHS', 'CLM', 'ESN', 'FIN', 'GWD', 'IBS', 'JPT', 'KHV', 'LWK', 'MSL', 'MXL', 'PEL', 'PJL', 'PUR', 'TSI', 'YRI']:
+    #             y, y_original, label_mapping = select_label(y_backup, y_original_backup, target_label = class_target)
+    #             current_loop = {"random_seed": RANDOM_SEED, "select_method": feature_select_method, "class_target": class_target}
+    #             feature_importance_cache_file_prefix = f"{X.shape[1]}_seed{RANDOM_SEED}_{feature_select_method}_cls_{class_target}"
 
                 logging.info(f"*************** current loop: {current_loop} ***************")
 
@@ -836,6 +832,7 @@ def main():
     global RANDOM_SEED
     input_feature_list =  [
         "merged_support3",
+        # "merged_support3_variance_1M_seed_42_xgb_8192",
     ]
     seed_list = [42, 919, 1204, 624, 306]
 
