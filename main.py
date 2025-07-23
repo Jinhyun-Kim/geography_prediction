@@ -13,7 +13,7 @@ from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit, Strati
 from sklearn.feature_selection import SelectKBest, chi2, f_classif, mutual_info_classif, SequentialFeatureSelector
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, precision_recall_fscore_support #, roc_curve, roc_auc_score, recall_score, precision_score,
-from sklearn.preprocessing import LabelEncoder#, StandardScaler
+from sklearn.preprocessing import LabelEncoder, KBinsDiscretizer#, StandardScaler
 from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier #, ExtraTreesClassifier,GradientBoostingClassifier
@@ -483,7 +483,7 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
     else:
         num_snps_before = X.shape[1]
         for n in n_list:
-            if method in ["random", "variance"]:
+            if method in ["random", "variance", "fst", "af"]:
                 if method == "random":
                     rng = np.random.default_rng(seed = RANDOM_SEED)
                     boolean_mask = np.zeros(num_snps_before, dtype=bool)
@@ -510,12 +510,77 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                     selected_indices = np.argsort(variances)[-n:]
                     boolean_mask = np.zeros(num_snps_before, dtype=bool)
                     boolean_mask[selected_indices] = True
+                elif method == "fst":
+                    unique_pops = np.unique(y)
+                    num_variants = X.shape[1]
+
+                    total_mean_freq = np.nanmean(X, axis=0) / 2  # 전체 대립 유전자 빈도 계산
+
+                    # 집단 간 및 집단 내 분산 초기화
+                    ss_between = np.zeros(num_variants)
+                    ss_within = np.zeros(num_variants)
+
+                    for pop in unique_pops:
+                        pop_indices = np.where(y == pop)[0]
+                        pop_data = X[pop_indices, :]
+
+                        pop_mean_freq = np.nanmean(pop_data, axis=0) / 2  # 집단별 평균 대립 유전자 빈도 계산
+                        ss_between += len(pop_indices) * (pop_mean_freq - total_mean_freq) ** 2  # 집단 간 분산 계산
+                        ss_within += np.nansum(((pop_data / 2) - pop_mean_freq) ** 2, axis=0)  # 집단 내 분산 계산
+
+                    # 자유도 계산
+                    df_between = len(unique_pops) - 1
+                    df_within = len(y) - len(unique_pops)
+
+                    # 평균 제곱 계산
+                    ms_between = ss_between / df_between
+                    ms_within = ss_within / df_within
+
+                    fst = np.nan_to_num(ms_between / (ms_between + ms_within))
+                    selected_indices = np.argsort(fst)[-n:]
+                    boolean_mask = np.zeros(num_snps_before, dtype=bool)
+                    boolean_mask[selected_indices] = True
+                elif method == "af":
+                    allele_counts = (X & 1) + ((X >> 1) & 1)
+                    allele_freqs = np.nanmean(allele_counts, axis=0) / 2.0
+                    mafs = np.minimum(allele_freqs, 1.0 - allele_freqs)
+                    selected_indices = np.argsort(mafs)[-n:]
+
+                    boolean_mask = np.zeros(num_snps_before, dtype=bool)
+                    boolean_mask[selected_indices] = True
 
                 X_selected = X[:, boolean_mask]
                 num_snps_after = X_selected.shape[1]
 
                 assert boolean_mask.sum() == num_snps_after
 
+            elif method == "mrmr":
+                X_discrete = KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='uniform').fit_transform(X)
+                y_ = np.array(y).ravel()
+                relevance = mutual_info_classif(X_discrete, y_, discrete_features=True)
+
+                selected = []
+                remaining = list(range(X.shape[1]))
+
+                while len(selected) < n and remaining:
+                    max_score = -np.inf
+                    best_feature = None
+                    for i in remaining:
+                        redundancy = np.mean([
+                            mutual_info_classif(X_discrete[:, [i]], X_discrete[:, j].ravel(), discrete_features=True)[0]
+                            for j in selected
+                        ]) if selected else 0
+
+                        score = relevance[i] - redundancy
+                        if score > max_score:
+                            max_score = score
+                            best_feature = i
+
+                    if best_feature is not None:
+                        selected.append(best_feature)
+                        remaining.remove(best_feature)
+                X_selected = X[:, selected]
+                print(f"Selected {X_selected.shape} features using mRMR method.")
                 
             elif method in ["chi2", "f_classif", "mutual_info_classif"]:
                 if method == "chi2":
@@ -629,7 +694,7 @@ def select_label(y, y_original, target_label):
 
 def get_data_path(save_data_path):
     data_locations = {
-        '223.195.111.31': '/home/jinhyun/data/1kGP',
+        '223.195.111.31': '/nfs_share/students/jinhyun/1kGP',
         '223.195.111.48': '/project/datacamp/team11/data',
         '147.47.44.229': '/home/jinhyun/data/1kGP',
         '147.47.44.93': '/home/jinhyun/data/1kGP',
@@ -659,11 +724,11 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
     save_data_path = "./results"
 
-    pre_selection_methods = ["variance", "random", ] #"chi2", "f_classif"
+    pre_selection_methods = ["variance", "random", "fst", "af"] #"chi2", "f_classif"
     n_pre_select_list = [1000000] #[2000000, 4000000, 8000000, 16000000, 32000000]#
     n_pre_select_goal = 1000000
 
-    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif"] # Extra-trees # "mutual_info_classif"
+    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif", "fst", "af"] # Extra-trees # "mutual_info_classif"
     select_feature_from_cache = False
     n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192] # Mimimum SNPs
@@ -833,6 +898,7 @@ def main():
     input_feature_list =  [
         "merged_support3",
         # "merged_support3_variance_1M_seed_42_xgb_8192",
+        # "merged_support3_random_1k_seed_42",
     ]
     seed_list = [42, 919, 1204, 624, 306]
 
