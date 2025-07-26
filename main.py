@@ -555,32 +555,28 @@ def select_feature(X, y, method, n_list, train_idx, val_idx, cache_file_prefix =
                 assert boolean_mask.sum() == num_snps_after
 
             elif method == "mrmr":
-                X_discrete = KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='uniform').fit_transform(X)
-                y_ = np.array(y).ravel()
-                relevance = mutual_info_classif(X_discrete, y_, discrete_features=True)
+                _, y_numeric = np.unique(y, return_inverse=True)
+                relevance = np.abs(np.corrcoef(X, y_numeric, rowvar=False)[-1, :-1])
 
                 selected = []
-                remaining = list(range(X.shape[1]))
+                remaining = set(range(X.shape[1]))
+                corr_matrix = np.abs(np.corrcoef(X, rowvar=False))
 
                 while len(selected) < n and remaining:
-                    max_score = -np.inf
+                    best_score = -np.inf
                     best_feature = None
-                    for i in remaining:
-                        redundancy = np.mean([
-                            mutual_info_classif(X_discrete[:, [i]], X_discrete[:, j].ravel(), discrete_features=True)[0]
-                            for j in selected
-                        ]) if selected else 0
 
-                        score = relevance[i] - redundancy
-                        if score > max_score:
-                            max_score = score
-                            best_feature = i
+                    for feature in remaining:
+                        redundancy = np.mean([corr_matrix[feature, sel] for sel in selected]) if selected else 0
+                        score = relevance[feature] - redundancy
 
-                    if best_feature is not None:
-                        selected.append(best_feature)
-                        remaining.remove(best_feature)
+                        if score > best_score:
+                            best_score = score
+                            best_feature = feature
+
+                    selected.append(best_feature)
+                    remaining.remove(best_feature)
                 X_selected = X[:, selected]
-                print(f"Selected {X_selected.shape} features using mRMR method.")
                 
             elif method in ["chi2", "f_classif", "mutual_info_classif"]:
                 if method == "chi2":
@@ -724,11 +720,11 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
     save_data_path = "./results"
 
-    pre_selection_methods = ["variance", "random", "fst", "af"] #"chi2", "f_classif"
+    pre_selection_methods = ["variance", "random", "fst", "af", "mrmr"] #"chi2", "f_classif"
     n_pre_select_list = [1000000] #[2000000, 4000000, 8000000, 16000000, 32000000]#
     n_pre_select_goal = 1000000
 
-    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif", "fst", "af"] # Extra-trees # "mutual_info_classif"
+    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif", "fst", "af", "mrmr"] # Extra-trees, "mutual_info_classif"
     select_feature_from_cache = False
     n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192] # Mimimum SNPs
