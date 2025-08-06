@@ -13,12 +13,14 @@ from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit, Strati
 from sklearn.feature_selection import SelectKBest, chi2, f_classif, mutual_info_classif, SequentialFeatureSelector
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, precision_recall_fscore_support #, roc_curve, roc_auc_score, recall_score, precision_score,
-from sklearn.preprocessing import LabelEncoder, KBinsDiscretizer#, StandardScaler
+from sklearn.preprocessing import LabelEncoder, KBinsDiscretizer, StandardScaler
 from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier #, ExtraTreesClassifier,GradientBoostingClassifier
 from sklearn.inspection import permutation_importance
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.linear_model import RidgeClassifier
+from sklearn.kernel_ridge import KernelRidge
 
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.manifold import TSNE
@@ -163,6 +165,43 @@ def train_ML(X_train, y_train, X_val, y_val, X_test, params, method = "SVM"):
         y_pred_test = grid_search.predict(X_test)
 
         return (y_pred_train, y_pred_val, y_pred_test, grid_search.best_params_)
+    
+    elif method == "SNP-BLUP":
+        mu = X_train.mean(axis=0)
+        Z_train = X_train - mu
+        Z_val = X_val - mu
+        Z_test = X_test - mu
+
+        model = RidgeClassifier(random_state=RANDOM_SEED, **params)
+
+        model.fit(Z_train, y_train)
+        preds = [model.predict(Z) for Z in (Z_train, Z_val, Z_test)]
+        return (*preds, model.get_params())
+
+    elif method == "GBLUP":
+        mu = X_train.mean(axis=0)
+        Z_train = X_train - mu
+        Z_val = X_val - mu
+        Z_test = X_test - mu
+
+        # Compute genomic relationship matrices (linear kernel)
+        p = Z_train.shape[1]
+        G_train = Z_train @ Z_train.T / p
+        G_val   = Z_val   @ Z_train.T / p
+        G_test  = Z_test  @ Z_train.T / p
+
+        model = KernelRidge(**params)
+        model.fit(G_train, y_train)
+
+        def kr_predict(G):
+            cont = model.predict(G)
+            cls  = np.unique(y_train)
+            p    = np.rint(cont).astype(int)
+            return np.clip(p, cls.min(), cls.max())
+
+        preds = [kr_predict(G) for G in (G_train, G_val, G_test)]
+        return (*preds, model.get_params())
+
 
     elif method == "LinearSVM":
         model = LinearSVC(penalty='l1', dual= "auto", **params, random_state=RANDOM_SEED)
@@ -720,19 +759,18 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
 
     save_data_path = "./results"
 
-    pre_selection_methods = ["variance", "random", "fst", "af", "mrmr"] #"chi2", "f_classif"
+    pre_selection_methods = ["variance", "random", "fst", "af"] #"chi2", "f_classif"
     n_pre_select_list = [1000000] #[2000000, 4000000, 8000000, 16000000, 32000000]#
     n_pre_select_goal = 1000000
 
-    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif", "fst", "af", "mrmr"] # Extra-trees, "mutual_info_classif"
+    select_methods = ["random", "xgb", "rf", "variance", "chi2", "f_classif", "fst", "af"] # Extra-trees, "mutual_info_classif"
     select_feature_from_cache = False
     n_select_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
     # n_select_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192] # Mimimum SNPs
     # n_select_list = [100, 1000, 10000, 100000, 1000000] # PCA
-
     n_dim_reduce_list = [128, 256, 512, 1024, None]  ## list should always contain None to perform whole feature training after selection
 
-    ML_models = ["SVM"] #["SVM", "XGB", "RF", "DT", "KNN"]
+    ML_models = ["SVM", "RF", "XGB", "SNP-BLUP", "GBLUP"] #["DT", "KNN"]
 
     hyper_params = {
         "SVM": [
@@ -760,7 +798,11 @@ def select_and_train(target_feature, save_result_file_name = "results.xlsx"):
         "XGB": [
             # {'learning_rate': 0.1, 'n_estimators': 100, 'max_depth': 3, 'gamma': 0, 'subsample': 1, 'colsample_bytree': 1, 'reg_lambda': 1, 'reg_alpha': 0}, #default
             {'learning_rate': 0.1, 'n_estimators': 1000, 'max_depth': 3, 'gamma': 0, 'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1, 'reg_alpha': 0}, # current best for 1048576 features
-        ]
+        ],
+
+        "SNP-BLUP" : [{"alpha" : 1.0}],
+
+        "GBLUP" : [{"alpha" : 1.0, "kernel" : 'precomputed'}],
     }
 
     ### code start -----
